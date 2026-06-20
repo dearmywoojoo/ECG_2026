@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>ECG Reading Trainer · 심전도 판독 훈련</title>
+<meta name="description" content="웨어러블 심전도 분석사를 위한 파형 판독 훈련 — 정상 동율동과 부정맥을 체계적으로 감별하고 퀴즈로 점검합니다." />
+<meta name="theme-color" content="#FBFBF9" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
+
+<style>
+  :root{
+    --paper:#FBFBF9;        /* 배경 종이 */
+    --card:#FFFFFF;
+    --ink:#15191B;          /* 트레이스·본문 */
+    --ink-soft:#3A4145;
+    --mute:#6E7670;         /* 보조 텍스트 */
+    --line:#E7E7E1;         /* UI 헤어라인 */
+    --grid:#F2D9DD;         /* 심전도 그리드(연한 살구) */
+    --grid-bold:#EBC4CB;
+    --red:#D81E34;          /* 심전도 트레이스 · 주의 */
+    --red-wash:#FBEAEC;
+    --teal:#147068;         /* 정상 · 정답(신뢰) */
+    --teal-wash:#E6F1EF;
+    --amber:#B07A12;        /* 학습 진행 강조 */
+    --amber-wash:#F7EFDC;
+    --radius:14px;
+    --mono:'IBM Plex Mono','SFMono-Regular',ui-monospace,Menlo,monospace;
+    --sans:'Pretendard','Pretendard Variable',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{background:var(--paper);color:var(--ink);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  body{min-height:100vh;line-height:1.55;letter-spacing:-0.01em}
+  button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+
+  /* ---- shell ---- */
+  .shell{max-width:480px;margin:0 auto;min-height:100vh;background:var(--paper);
+    position:relative;padding-bottom:96px}
+  @media(min-width:520px){.shell{border-left:1px solid var(--line);border-right:1px solid var(--line)}}
+
+  .topbar{position:sticky;top:0;z-index:30;background:rgba(251,251,249,.86);
+    backdrop-filter:blur(10px);border-bottom:1px solid var(--line);
+    padding:14px 20px 12px;display:flex;align-items:center;gap:10px}
+  .topbar .pulse{width:9px;height:9px;border-radius:50%;background:var(--red);
+    box-shadow:0 0 0 0 rgba(216,30,52,.5);animation:pulse 2.4s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(216,30,52,.45)}70%{box-shadow:0 0 0 7px rgba(216,30,52,0)}100%{box-shadow:0 0 0 0 rgba(216,30,52,0)}}
+  .topbar .brand{font-family:var(--mono);font-weight:600;font-size:12.5px;
+    letter-spacing:.14em;text-transform:uppercase;color:var(--ink)}
+  .topbar .sub{font-size:11px;color:var(--mute);margin-left:auto;font-family:var(--mono);letter-spacing:.04em}
+
+  .view{padding:20px 20px 8px;animation:fade .32s ease both}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  /* ---- type ---- */
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--mute);font-weight:500}
+  h1{font-size:25px;font-weight:700;letter-spacing:-0.03em;line-height:1.22}
+  h2{font-size:18px;font-weight:700;letter-spacing:-0.02em}
+  h3{font-size:15px;font-weight:600}
+  .lead{color:var(--ink-soft);font-size:14px;margin-top:8px}
+  .mono{font-family:var(--mono)}
+
+  /* ---- ECG trace card ---- */
+  .trace{position:relative;border-radius:12px;overflow:hidden;border:1px solid var(--grid-bold);
+    background:#FFFCFC}
+  .trace svg{display:block;width:100%;height:auto}
+  .trace .lead-tag{position:absolute;top:8px;left:10px;font-family:var(--mono);
+    font-size:10px;letter-spacing:.1em;color:#B98890;background:rgba(255,255,255,.7);
+    padding:2px 6px;border-radius:5px}
+
+  /* ---- cards ---- */
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:18px}
+  .stack{display:flex;flex-direction:column;gap:14px}
+  .nav-card{display:flex;align-items:center;gap:14px;width:100%;text-align:left;
+    background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:16px 16px;transition:transform .15s ease,border-color .15s ease}
+  .nav-card:active{transform:scale(.985)}
+  .nav-card:hover{border-color:#D6D6CE}
+  .nav-card .ic{width:42px;height:42px;border-radius:11px;display:grid;place-items:center;
+    flex:none;background:var(--paper);border:1px solid var(--line)}
+  .nav-card .ttl{font-weight:600;font-size:15px;display:block}
+  .nav-card .dsc{font-size:12.5px;color:var(--mute);margin-top:2px;display:block}
+  .nav-card .arr{margin-left:auto;color:var(--mute)}
+
+  /* ---- pills / chips ---- */
+  .chip{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);
+    font-size:11px;letter-spacing:.04em;padding:3px 9px;border-radius:20px;
+    border:1px solid var(--line);color:var(--ink-soft);background:var(--card)}
+  .chip.red{color:var(--red);border-color:#F2C9CE;background:var(--red-wash)}
+  .chip.teal{color:var(--teal);border-color:#BFE0DA;background:var(--teal-wash)}
+  .chip.amber{color:var(--amber);border-color:#E8D7AC;background:var(--amber-wash)}
+
+  /* ---- normal range table ---- */
+  .ranges{display:flex;flex-direction:column;gap:0;border:1px solid var(--line);
+    border-radius:12px;overflow:hidden}
+  .ranges .row{display:flex;align-items:baseline;gap:10px;padding:11px 14px;
+    border-bottom:1px solid var(--line)}
+  .ranges .row:last-child{border-bottom:none}
+  .ranges .row:nth-child(odd){background:#FCFCFB}
+  .ranges .k{font-size:13px;font-weight:600}
+  .ranges .ke{font-family:var(--mono);font-size:10px;color:var(--mute);letter-spacing:.04em}
+  .ranges .v{margin-left:auto;font-family:var(--mono);font-size:13px;font-weight:500;color:var(--teal)}
+  .ranges .u{font-family:var(--mono);font-size:11px;color:var(--mute)}
+
+  /* ---- learn steps ---- */
+  .seg-tabs{display:flex;gap:6px;margin:14px 0}
+  .seg-tabs button{flex:1;font-family:var(--mono);font-size:12px;font-weight:500;
+    padding:8px 4px;border-radius:9px;border:1px solid var(--line);color:var(--mute);
+    background:var(--card);transition:all .15s}
+  .seg-tabs button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+
+  /* ---- checklist ---- */
+  .check{display:flex;gap:11px;padding:12px 0;border-bottom:1px solid var(--line)}
+  .check:last-child{border-bottom:none}
+  .check .n{flex:none;width:25px;height:25px;border-radius:7px;background:var(--paper);
+    border:1px solid var(--line);display:grid;place-items:center;font-family:var(--mono);
+    font-size:12px;font-weight:600;color:var(--ink-soft)}
+  .check .b{font-weight:600;font-size:14px}
+  .check .d{font-size:13px;color:var(--ink-soft);margin-top:2px}
+  .check .d em{font-style:normal;font-family:var(--mono);font-size:12px;color:var(--teal)}
+
+  /* ---- library list ---- */
+  .cat-label{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--mute);margin:22px 2px 10px}
+  .rhythm-row{display:flex;align-items:center;gap:13px;width:100%;text-align:left;
+    background:var(--card);border:1px solid var(--line);border-radius:12px;padding:11px 13px;
+    transition:border-color .15s,transform .15s}
+  .rhythm-row:active{transform:scale(.99)}
+  .rhythm-row:hover{border-color:#D6D6CE}
+  .rhythm-row .mini{width:92px;flex:none;border-radius:8px;overflow:hidden;border:1px solid var(--grid-bold)}
+  .rhythm-row .mini svg{display:block;width:100%;height:auto}
+  .rhythm-row .nm{font-weight:600;font-size:14px;display:flex;align-items:center;gap:7px}
+  .rhythm-row .ne{font-family:var(--mono);font-size:11px;color:var(--mute);margin-top:1px;letter-spacing:.02em}
+  .rhythm-row .dot{width:7px;height:7px;border-radius:50%;flex:none}
+
+  /* ---- detail ---- */
+  .back{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:12px;
+    color:var(--mute);letter-spacing:.04em;padding:6px 0;margin-bottom:6px}
+  .keybox{border-left:3px solid var(--red);background:var(--red-wash);border-radius:0 10px 10px 0;
+    padding:13px 15px;margin:4px 0}
+  .keybox.teal{border-color:var(--teal);background:var(--teal-wash)}
+  .keybox .lab{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--mute);margin-bottom:4px}
+  .keybox .txt{font-size:14px;font-weight:600;line-height:1.45}
+  .crit-banner{display:flex;gap:8px;align-items:center;background:#15191B;color:#fff;
+    border-radius:10px;padding:10px 13px;font-size:13px;font-weight:500}
+  .crit-banner .mono{color:#FF6678;font-size:11px;letter-spacing:.08em}
+  .feat{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+  .feat:last-child{border-bottom:none}
+  .feat .ft{flex:none;width:54px;font-family:var(--mono);font-size:11px;font-weight:600;
+    color:var(--ink-soft);padding-top:1px;letter-spacing:.02em}
+  .feat .fd{font-size:13.5px;color:var(--ink-soft)}
+  .note{font-size:13px;color:var(--ink-soft);background:var(--paper);border:1px solid var(--line);
+    border-radius:10px;padding:12px 14px;line-height:1.5}
+  .note .nt{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--mute);display:block;margin-bottom:4px}
+
+  /* ---- quiz ---- */
+  .qmeta{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+  .qprog{flex:1;height:5px;border-radius:3px;background:var(--line);overflow:hidden}
+  .qprog>i{display:block;height:100%;background:var(--ink);border-radius:3px;transition:width .35s}
+  .qscore{font-family:var(--mono);font-size:12px;color:var(--ink-soft);font-weight:500}
+  .opts{display:flex;flex-direction:column;gap:9px;margin-top:16px}
+  .opt{display:flex;align-items:center;gap:11px;width:100%;text-align:left;
+    background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:14px 15px;
+    font-size:14.5px;font-weight:500;transition:all .14s}
+  .opt:hover:not(:disabled){border-color:#C9C9C0}
+  .opt .key{font-family:var(--mono);font-size:12px;color:var(--mute);width:18px;flex:none}
+  .opt.correct{border-color:var(--teal);background:var(--teal-wash);color:var(--teal)}
+  .opt.wrong{border-color:var(--red);background:var(--red-wash);color:var(--red)}
+  .opt .mark{margin-left:auto;font-family:var(--mono);font-weight:600;font-size:13px}
+  .opt:disabled{cursor:default}
+  .feedback{margin-top:16px;border-radius:12px;padding:15px;border:1px solid var(--line);
+    animation:fade .3s both}
+  .feedback.ok{background:var(--teal-wash);border-color:#BFE0DA}
+  .feedback.no{background:var(--red-wash);border-color:#F2C9CE}
+  .feedback .ttl{font-weight:700;font-size:14px;display:flex;align-items:center;gap:7px}
+  .feedback .ex{font-size:13px;color:var(--ink-soft);margin-top:7px;line-height:1.5}
+  .feedback .ex b{color:var(--ink)}
+
+  .btn{display:block;width:100%;text-align:center;background:var(--ink);color:#fff;
+    font-weight:600;font-size:15px;padding:15px;border-radius:12px;margin-top:16px;
+    transition:transform .12s,opacity .12s}
+  .btn:active{transform:scale(.985)}
+  .btn.ghost{background:var(--card);color:var(--ink);border:1px solid var(--line)}
+
+  .result{text-align:center;padding:30px 10px}
+  .result .big{font-family:var(--mono);font-size:54px;font-weight:600;letter-spacing:-0.03em;line-height:1}
+  .result .of{color:var(--mute);font-size:15px}
+  .result .msg{font-size:15px;margin-top:14px;color:var(--ink-soft)}
+
+  /* ---- bottom nav ---- */
+  .tabbar{position:fixed;bottom:0;left:0;right:0;z-index:40;background:rgba(251,251,249,.93);
+    backdrop-filter:blur(12px);border-top:1px solid var(--line);
+    display:flex;max-width:480px;margin:0 auto;padding:8px 8px calc(8px + env(safe-area-inset-bottom))}
+  .tabbar button{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;
+    padding:7px 4px;color:var(--mute);font-size:10.5px;font-weight:500;border-radius:10px;letter-spacing:-0.01em}
+  .tabbar button.on{color:var(--ink)}
+  .tabbar button .ic{transition:transform .15s}
+  .tabbar button.on .ic{transform:translateY(-1px)}
+  .tabbar button.on .ic svg{stroke:var(--red)}
+
+  .footnote{font-size:11px;color:var(--mute);line-height:1.5;padding:18px 4px 6px;border-top:1px solid var(--line);margin-top:22px}
+  .footnote b{color:var(--ink-soft);font-weight:600}
+
+  /* ---- home dashboard ---- */
+  .hero{width:100%;text-align:left;border:1px solid var(--line);border-radius:16px;
+    overflow:hidden;background:var(--card);transition:transform .15s,border-color .15s}
+  .hero:active{transform:scale(.99)}
+  .hero .bar{display:flex;align-items:center;gap:9px;padding:11px 14px;background:#15191B;color:#fff}
+  .hero .bar .dot{width:7px;height:7px;border-radius:50%;background:var(--red);
+    box-shadow:0 0 0 0 rgba(255,102,120,.6);animation:pulse 2.4s infinite;flex:none}
+  .hero .bar .ld{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;color:#9AA3A0}
+  .hero .bar .rd{margin-left:auto;font-family:var(--mono);font-size:12px;color:#C9CFCC;display:flex;align-items:baseline;gap:5px}
+  .hero .bar .rd b{font-size:17px;font-weight:600;color:#43C9BC;letter-spacing:-0.02em}
+  .hero .body{padding:6px 12px 12px}
+  .hero .cap{display:flex;align-items:center;justify-content:space-between;padding:8px 4px 2px}
+  .hero .cap .nm{font-size:13px;font-weight:600;color:var(--teal)}
+  .hero .cap .go{font-family:var(--mono);font-size:11px;color:var(--mute);display:flex;align-items:center;gap:3px}
+
+  .prog-card{display:flex;flex-direction:column;gap:11px;background:var(--card);
+    border:1px solid var(--line);border-radius:14px;padding:15px 16px}
+  .prog-card .pr{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px;font-weight:600;white-space:nowrap}
+  .prog-card .pr .v{font-family:var(--mono);font-size:12px;color:var(--mute);font-weight:500}
+  .prog-card .pr .v b{color:var(--ink);font-size:14px}
+
+  .tip{width:100%;text-align:left;display:flex;gap:13px;align-items:stretch;
+    background:var(--card);border:1px solid var(--line);border-radius:14px;padding:13px;
+    transition:transform .15s,border-color .15s}
+  .tip:active{transform:scale(.99)}
+  .tip:hover{border-color:#D6D6CE}
+  .tip .mini{width:104px;flex:none;border-radius:9px;overflow:hidden;border:1px solid var(--grid-bold)}
+  .tip .mini svg{display:block;width:100%;height:auto}
+  .tip .tx{display:flex;flex-direction:column;min-width:0}
+  .tip .tx .nm{font-weight:600;font-size:14px;display:flex;align-items:center;gap:6px}
+  .tip .tx .kd{font-size:12.5px;color:var(--ink-soft);margin-top:5px;line-height:1.45}
+
+  .crit-row{display:flex;gap:9px}
+  .crit-chip{flex:1;display:flex;align-items:center;gap:8px;background:#15191B;color:#fff;
+    border-radius:11px;padding:11px 13px;text-align:left;transition:transform .12s}
+  .crit-chip:active{transform:scale(.98)}
+  .crit-chip .nm{font-size:13px;font-weight:600;display:block}
+  .crit-chip .ab{font-family:var(--mono);font-size:10px;color:#FF8A97;letter-spacing:.06em;margin-top:1px;display:block}
+  .sec-head{display:flex;align-items:baseline;justify-content:space-between;margin:26px 2px 11px}
+  .sec-head .t{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute)}
+
+  @media(prefers-reduced-motion:reduce){
+    *{animation-duration:.001ms!important;transition-duration:.001ms!important}
+  }
+  .trace-draw{stroke-dasharray:var(--len);stroke-dashoffset:var(--len);
+    animation:draw 1.5s cubic-bezier(.5,0,.2,1) forwards}
+  @keyframes draw{to{stroke-dashoffset:0}}
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="topbar">
+    <span class="pulse"></span>
+    <span class="brand">ECG&nbsp;Reading&nbsp;Trainer</span>
+    <span class="sub" id="topSub">LEAD&nbsp;I · 25 mm/s</span>
+  </div>
+  <div id="app"></div>
+</div>
+
+<nav class="tabbar" id="tabbar"></nav>
+
+<script>
+/* ============================================================
+   ECG Reading Trainer — 웨어러블 심전도 분석사용 파형 판독 훈련
+   순수 HTML/CSS/JS · 빌드 단계 없음 · GitHub Pages에서 바로 렌더
+   콘텐츠 근거: 표준 12유도 체계적 판독(rate·rhythm·axis·interval·
+   morphology) + 단일유도 웨어러블 판독 문헌(신호품질/조기수축 감별)
+   ============================================================ */
+
+/* ---------------- ECG 파형 생성기 ---------------- */
+function ecgPath(o){
+  o = Object.assign({
+    width:760, height:150, beats:5, hr:72, pWave:true, prMs:160,
+    qrsMs:90, qrsAmp:1, wide:false, irregular:false, fib:false,
+    flutter:false, dissoc:false, early:[], seed:1, labels:false
+  }, o);
+  const W=o.width, H=o.height, base=H*0.62;
+  const rr=(60/o.hr)*1000;
+  const total=o.beats*rr;
+  const px=ms=>(ms/total)*W;
+  const rand=n=>{const x=Math.sin(o.seed*97.3+n*41.7)*9999;return x-Math.floor(x);};
+  const marks=[];           // {x,t} segment labels
+
+  /* 이벤트를 시간순으로 모은 뒤 한 번에 그린다 → 해리(dissociation) 표현 가능 */
+  const ev=[];   // {ms, type:'P'|'QRS'|'T'|'F'|'fib', wide, amp}
+  const amp1=o.qrsAmp;
+
+  function buildBeats(){
+    let t=rr*0.34;
+    for(let b=0;b<o.beats;b++){
+      let thisRR=rr;
+      if(o.irregular) thisRR=rr*(0.6+rand(b)*0.72);
+      const isEarly=o.early.indexOf(b)>=0;
+      if(isEarly) thisRR=rr*0.52;
+      const qrsAt=t;
+      const wideBeat = o.wide || (isEarly && o.earlyWide);
+
+      // 심방 활동
+      if(o.fib){ ev.push({ms:qrsAt, type:'fib', from:qrsAt-thisRR}); }
+      else if(o.flutter){ /* F파는 일괄 처리 */ }
+      else if(o.pWave && !isEarly){ ev.push({ms:qrsAt-o.prMs, type:'P'}); }
+      else if(isEarly && o.pEarly){ ev.push({ms:qrsAt-o.prMs*0.7, type:'P', ectopic:true}); }
+
+      // QRS + T
+      ev.push({ms:qrsAt, type:'QRS', wide:wideBeat, amp:wideBeat?amp1*1.05:amp1, ectopic:isEarly});
+      ev.push({ms:qrsAt + (wideBeat?255:225), type:'T', wide:wideBeat, amp:wideBeat?amp1:amp1});
+
+      if(o.labels && b===1){ marks.push({x:px(qrsAt-o.prMs),t:'P'}); marks.push({x:px(qrsAt),t:'QRS'}); marks.push({x:px(qrsAt+225),t:'T'}); }
+
+      t = isEarly ? qrsAt + rr*1.42 /* 보상성 휴지기 */ : qrsAt + thisRR;
+    }
+  }
+
+  if(o.dissoc){
+    /* 완전 방실차단: 심방(P)과 심실(QRS+T)이 서로 다른 박자로 독립 박동 */
+    const vRR=rr;                        // 느린 심실 이탈리듬
+    const aRR=(60/(o.atrialHr||76))*1000;// 빠른 규칙적 심방
+    for(let m=rr*0.2;m<total;m+=aRR) ev.push({ms:m,type:'P'});
+    for(let m=rr*0.45;m<total;m+=vRR){ ev.push({ms:m,type:'QRS',wide:true,amp:0.85}); ev.push({ms:m+255,type:'T',wide:true,amp:0.8}); }
+    if(o.labels){ marks.push({x:px(rr*0.2),t:'P'}); marks.push({x:px(rr*0.45),t:'QRS'}); }
+  } else if(o.flutter){
+    buildBeats();
+  } else {
+    buildBeats();
+  }
+
+  // 심방조동 F파를 이벤트 스트림에 포함(시간순 처리로 획 겹침 방지)
+  if(o.flutter){ for(let m=85;m<total;m+=170) ev.push({ms:m,type:'F'}); }
+  ev.sort((a,b)=>a.ms-b.ms);
+
+  const qrsTimes=ev.filter(e=>e.type==='QRS').map(e=>e.ms).sort((a,b)=>a-b);
+  const nextQrsAfter=ms=>{ for(const q of qrsTimes){ if(q>ms+8) return q; } return Infinity; };
+  const nearQrs=(ms,win)=>qrsTimes.some(q=>Math.abs(q-ms)<win);
+
+  /* ---- 한붓그리기: 커서(cx)는 항상 전진만 한다 ---- */
+  let d=`M0 ${base.toFixed(1)}`;
+  let cx=0;
+  const L=(ms,y)=>{ if(ms<cx) return; d+=` L${px(ms).toFixed(1)} ${y.toFixed(1)}`; cx=ms; };
+  const Q=(cms,cy,ms,y)=>{ if(ms<cx) return; d+=` Q${px(cms).toFixed(1)} ${cy.toFixed(1)} ${px(ms).toFixed(1)} ${y.toFixed(1)}`; cx=ms; };
+  const toBase=ms=>{ if(ms>cx) L(ms,base); };
+
+  for(const e of ev){
+    if(e.type==='P'){
+      // QRS~T 구간에 묻히는 P는 생략(묻힌 P) → 해리에서도 깔끔하게 행진
+      if(nearQrs(e.ms,150) || qrsTimes.some(q=>e.ms>q && e.ms<q+330)) continue;
+      const w=120,h=9*(e.ectopic?0.8:1), s=e.ms-w/2, en=e.ms+w/2;
+      if(en<=cx) continue;
+      toBase(s); Q(e.ms, base-h, en, base);
+    } else if(e.type==='F'){
+      if(nearQrs(e.ms,118)) continue;
+      const s=e.ms-85, en=e.ms+85; if(en<=cx) continue;
+      toBase(s); L(e.ms, base-16); L(en, base+3);
+    } else if(e.type==='fib'){
+      const span=Math.max(rr*0.55,200), steps=Math.max(7,Math.round(span/48)), s0=e.ms-span;
+      for(let i=1;i<=steps;i++){ const ms=s0+span*(i/steps); if(ms<=cx)continue; L(ms, base-(rand(i+e.ms)*2-1)*5); }
+      toBase(e.ms-22);
+    } else if(e.type==='QRS'){
+      const a=(e.wide?44:48)*(e.amp||1);
+      if(e.wide){
+        const half=78;
+        toBase(e.ms-half);
+        L(e.ms-half, base+9);
+        Q(e.ms-half*0.35, base-a, e.ms+half*0.1, base-a*0.92); // 둔하고 넓은 정점
+        L(e.ms+half, base+a*0.42);                              // 깊고 넓은 S
+        L(e.ms+half+34, base);
+      } else {
+        const half=o.qrsMs/2;
+        toBase(e.ms-half*0.6);
+        L(e.ms-half*0.55, base+7);   // Q
+        L(e.ms, base-a);             // R
+        L(e.ms+half*0.4, base+a*0.24);// S
+        L(e.ms+half*0.85, base);
+      }
+    } else if(e.type==='T'){
+      const w=210, h=(e.wide?-17:15)*(e.amp||1); // 광범위 QRS는 불일치(discordant) T
+      let s=e.ms-w/2, en=Math.min(e.ms+w/2, nextQrsAfter(e.ms)-30);
+      if(en<=e.ms || en<=cx) continue;        // 다음 QRS와 겹치면 T 생략(빠른 리듬)
+      toBase(s); Q(e.ms, base-h, en, base);
+    }
+  }
+  L(total, base);
+
+  return {d, marks, W, H, base};
+}
+
+function traceSVG(cfg, opt){
+  opt=opt||{};
+  const r=ecgPath(Object.assign({}, cfg, {labels:opt.labels}));
+  const gid='g'+Math.random().toString(36).slice(2,7);
+  const accent = cfg.critical ? 'var(--red)' : (cfg.normal ? 'var(--teal)' : 'var(--ink)');
+  const stroke = opt.mini ? 1.6 : 2.3;
+  let lbls='';
+  if(opt.labels){
+    r.marks.forEach(m=>{
+      lbls+=`<text x="${m.x.toFixed(0)}" y="20" font-family="var(--mono)" font-size="13" `+
+            `font-weight="600" fill="${m.t==='QRS'?'var(--red)':'var(--ink-soft)'}" text-anchor="middle">${m.t}</text>`;
+    });
+  }
+  const cls = opt.animate ? 'trace-draw' : '';
+  return `<div class="trace">${opt.mini?'':'<span class="lead-tag">LEAD I</span>'}
+    <svg viewBox="0 0 ${r.W} ${r.H}" preserveAspectRatio="none" style="height:${opt.h||(opt.mini?54:150)}px">
+      <defs>
+        <pattern id="${gid}" width="13" height="13" patternUnits="userSpaceOnUse">
+          <path d="M13 0H0V13" fill="none" stroke="var(--grid)" stroke-width="1"/>
+        </pattern>
+        <pattern id="${gid}b" width="65" height="65" patternUnits="userSpaceOnUse">
+          <path d="M65 0H0V65" fill="none" stroke="var(--grid-bold)" stroke-width="1.1"/>
+        </pattern>
+      </defs>
+      <rect width="${r.W}" height="${r.H}" fill="#FFFCFC"/>
+      <rect width="${r.W}" height="${r.H}" fill="url(#${gid})"/>
+      <rect width="${r.W}" height="${r.H}" fill="url(#${gid}b)"/>
+      <path d="${r.d}" fill="none" stroke="${accent}" stroke-width="${stroke}"
+            stroke-linejoin="round" stroke-linecap="round" class="${cls}"/>
+      ${lbls}
+    </svg></div>`;
+}
+
+/* ---------------- 데이터 ---------------- */
+const NORMAL_RANGES=[
+  {k:'심박수',ke:'Heart Rate',v:'60–100',u:'bpm'},
+  {k:'PR 간격',ke:'AV Conduction',v:'120–200',u:'ms'},
+  {k:'QRS 폭',ke:'Ventricular Depol.',v:'< 120',u:'ms'},
+  {k:'QT 간격',ke:'Ventricular Cycle',v:'350–440',u:'ms'},
+  {k:'QTc (Bazett)',ke:'Corrected QT',v:'남 ≤440 / 여 ≤460',u:'ms'},
+  {k:'P파 폭',ke:'Atrial Depol.',v:'≤ 120',u:'ms'},
+];
+
+const READ_STEPS=[
+  {n:'0',b:'신호 품질부터 확인',d:'기저선 흔들림(baseline wander)·근전위·접촉 불량이 있으면 판독 불가로 분류한다. 단일 유도는 한쪽 접촉만 나빠도 전체가 망가진다. <em>판독 가능 여부가 먼저</em>'},
+  {n:'1',b:'심박수 (Rate)',d:'규칙적이면 R-R로, 불규칙하면 strip 전체 R파를 세어 환산. <em>60–100 = 정상 · &lt;60 서맥 · &gt;100 빈맥</em>'},
+  {n:'2',b:'리듬 (Rhythm)',d:'R-R 간격이 규칙적인가? 불규칙하면 "규칙적으로 불규칙"인지 "불규칙하게 불규칙"인지 구분. <em>불규칙하게 불규칙 → AF 의심</em>'},
+  {n:'3',b:'P파',d:'모든 QRS 앞에 P파가 있고 II에서 양성인가? 없거나 세동파/톱니파면 심방 기원 부정맥. <em>P:QRS = 1:1 이 정상</em>'},
+  {n:'4',b:'PR · QRS 폭',d:'PR 120–200ms 유지? QRS가 좁은가(<120, 상심실성) 넓은가(≥120, 심실 기원/각차단)? <em>넓은 QRS 빈맥 = VT 우선 배제</em>'},
+];
+
+const RHYTHMS=[
+  /* ---- 정상 · 동성 ---- */
+  {id:'nsr',cat:'정상 · 동성',name:'정상 동율동',nameEn:'Normal Sinus Rhythm',abbr:'NSR',
+   normal:true, color:'var(--teal)',
+   key:'모든 QRS 앞에 규칙적인 양성 P파, 60–100회, R-R 규칙. 모든 판독의 기준선.',
+   keyTone:'teal',
+   feats:[['리듬','R-R 규칙적, P-P 규칙적'],['P파','II에서 양성, 모든 QRS를 1:1로 선행'],['PR','120–200ms로 일정'],['QRS','좁음(<120ms)']],
+   note:'NSR을 기준점으로 삼아라. "정상이 아닌 이유"를 한 가지라도 찾지 못하면 정상으로 판정한다.',
+   cfg:{hr:72,pWave:true,prMs:160,qrsMs:90,beats:5,normal:true}},
+
+  {id:'sbrady',cat:'정상 · 동성',name:'동성 서맥',nameEn:'Sinus Bradycardia',abbr:'SB',
+   color:'var(--teal)',
+   key:'파형은 정상 동율동인데 심박수만 60 미만. 운동선수·수면 중에는 정상 변이.',
+   feats:[['리듬','규칙적'],['P파','정상, 1:1 선행'],['심박수','< 60 bpm'],['맥락','수면·서맥 약물·운동선수에서 흔함']],
+   note:'웨어러블에서 수면 중 40대 bpm은 흔한 정상 소견이다. 증상·맥락 없이 "서맥"만으로 과진단하지 않는다.',
+   cfg:{hr:46,pWave:true,prMs:170,qrsMs:90,beats:4,normal:true}},
+
+  {id:'stach',cat:'정상 · 동성',name:'동성 빈맥',nameEn:'Sinus Tachycardia',abbr:'ST',
+   color:'var(--teal)',
+   key:'정상 동율동이 단순히 빨라진 것(>100). P파가 보이면 SVT가 아니라 동성 빈맥.',
+   feats:[['리듬','규칙적'],['P파','각 QRS 앞에 존재(빠르면 T에 겹칠 수 있음)'],['심박수','100–150 bpm'],['감별','P파 확인 → SVT와 구분']],
+   note:'운동·발열·불안·카페인으로 흔히 유발. P파를 찾을 수 있으면 동성 빈맥, 못 찾으면 SVT 의심.',
+   cfg:{hr:130,pWave:true,prMs:140,qrsMs:85,beats:7,normal:true}},
+
+  /* ---- 심방 부정맥 ---- */
+  {id:'afib',cat:'심방 부정맥',name:'심방세동',nameEn:'Atrial Fibrillation',abbr:'AF',
+   key:'P파 소실 + 기저선 세동파 + R-R "불규칙하게 불규칙". 웨어러블 판독의 핵심 표적.',
+   feats:[['P파','뚜렷한 P파 없음, 거친 세동파(f wave)'],['리듬','R-R 간격이 불규칙하게 불규칙'],['QRS','대개 좁음'],['위험','심방 수축 소실 → 혈전·뇌졸중 위험 ↑']],
+   note:'AI가 AF로 플래그해도 최종 판정은 사람이 한다. 조기수축이 잦으면 가짜 불규칙으로 보일 수 있으니, 진짜 P파 소실인지 반드시 확인한다.',
+   cfg:{hr:96,pWave:false,fib:true,irregular:true,qrsMs:90,beats:7,seed:3}},
+
+  {id:'aflutter',cat:'심방 부정맥',name:'심방조동',nameEn:'Atrial Flutter',abbr:'AFL',
+   key:'톱니 모양 F파가 일정 간격으로 반복. 흔히 2:1 전도로 심실 약 150회.',
+   feats:[['F파','규칙적 톱니파(sawtooth), 심방 250–350회'],['전도','2:1·3:1 등 일정 비율'],['리듬','심실은 규칙적인 경우가 많음'],['단서','심실 150회 고정이면 2:1 조동 의심']],
+   note:'심실 박동이 "딱 150회"로 규칙적이면 숨은 2:1 조동을 의심하라. 단일 유도에서는 F파가 T파에 겹쳐 놓치기 쉽다.',
+   cfg:{hr:150,pWave:false,flutter:true,qrsMs:90,beats:6,seed:2}},
+
+  {id:'svt',cat:'심방 부정맥',name:'발작성 상심실성 빈맥',nameEn:'Paroxysmal SVT',abbr:'SVT',
+   key:'좁은 QRS인데 150–250회로 매우 빠르고 규칙적. 갑자기 시작·종료.',
+   feats:[['리듬','규칙적, 매우 빠름'],['QRS','좁음(상심실 기원)'],['P파','잘 안 보이거나 QRS에 묻힘'],['경과','발작성 — 급발·급종료']],
+   note:'P파가 안 보이고 규칙적·빠른 좁은 QRS면 SVT. P파가 보이면 동성 빈맥으로 재분류.',
+   cfg:{hr:188,pWave:false,prMs:100,qrsMs:80,beats:9}},
+
+  {id:'pac',cat:'심방 부정맥',name:'심방조기수축',nameEn:'Premature Atrial Contraction',abbr:'PAC',
+   color:'var(--amber)',
+   key:'정상 리듬 사이에 이른 박동이 끼어든다. 모양은 정상이지만 타이밍이 빠르다.',
+   feats:[['타이밍','예정보다 이른 QRS'],['P파','조기 박동의 P 모양이 다름(이소성)'],['QRS','좁음(정상 전도)'],['주의','잦으면 단일 유도에서 AF로 오인']],
+   note:'조기수축이 잦으면 R-R가 들쭉날쭉해 AF처럼 보인다. 이른 박동 뒤에 정상 리듬이 회복되고 P파가 살아 있으면 AF가 아니라 PAC다.',
+   keyTone:'amber',
+   cfg:{hr:72,pWave:true,prMs:160,qrsMs:90,beats:6,early:[3],pEarly:true,seed:6}},
+
+  /* ---- 심실 부정맥 ---- */
+  {id:'pvc',cat:'심실 부정맥',name:'심실조기수축',nameEn:'Premature Ventricular Contraction',abbr:'PVC',
+   color:'var(--amber)',
+   key:'이르게 나오는 넓고 기괴한 QRS. 앞에 P파 없고 보상성 휴지기가 따른다.',
+   feats:[['타이밍','예정보다 이른 박동'],['QRS','넓고(≥120ms) 모양이 기괴'],['P파','조기 박동 앞에 P 없음'],['뒤','보상성 휴지기(긴 쉼)']],
+   note:'단발성 PVC는 흔하고 대개 양성이다. 다만 잦거나 연달아 나오면(2연발·3연발) VT로 진행할 수 있어 빈도·연속성을 기록한다.',
+   keyTone:'amber',
+   cfg:{hr:72,pWave:true,prMs:160,qrsMs:90,beats:6,early:[3],earlyWide:true,seed:8}},
+
+  {id:'vt',cat:'심실 부정맥',name:'심실빈맥',nameEn:'Ventricular Tachycardia',abbr:'VT',
+   critical:true,
+   key:'넓은 QRS가 100–250회로 연속. 응급 리듬 — 넓은 QRS 빈맥은 VT부터 배제.',
+   feats:[['QRS','넓음(≥120ms), 단일 형태가 많음'],['리듬','대개 규칙적, 빠름'],['해리','방실 해리 가능(P와 무관)'],['분류','≥30초 지속 = sustained VT']],
+   note:'무맥성 VT는 즉시 제세동 적응증. 분석 화면에서 넓은 QRS 빈맥은 SVT 변형보다 VT를 먼저 의심하고 상위로 에스컬레이션한다.',
+   cfg:{hr:170,pWave:false,qrsMs:150,wide:true,qrsAmp:1.1,beats:7,critical:true,seed:4}},
+
+  /* ---- 전도 장애 ---- */
+  {id:'avb3',cat:'전도 장애',name:'3도 방실차단',nameEn:'Complete AV Block',abbr:'CAVB',
+   critical:true,
+   key:'심방과 심실이 서로 무관하게 박동(방실 해리). P파와 QRS가 각자 논다.',
+   feats:[['해리','P파와 QRS가 완전히 무관'],['리듬','P-P, R-R는 각각 규칙적'],['심실','느린 이탈리듬(30–45회)'],['위험','실신·급사 → 영구 박동기 적응증']],
+   note:'P파는 규칙적인데 QRS와 박자가 전혀 안 맞으면 완전차단. 느린 심박+실신력이면 응급으로 상위 보고한다.',
+   cfg:{hr:38,atrialHr:70,pWave:true,prMs:0,qrsMs:110,beats:4,dissoc:true,critical:true,seed:5}},
+];
+
+const CATS=['정상 · 동성','심방 부정맥','심실 부정맥','전도 장애'];
+function byId(id){return RHYTHMS.find(r=>r.id===id);}
+
+/* ---------------- 아이콘 ---------------- */
+const I={
+  read:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h3l2-7 4 14 3-9 2 2h6"/></svg>',
+  lib:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h5v16H4zM10 4h5v16h-5zM16 5l4 1-3 14-4-1z"/></svg>',
+  quiz:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.1 9a3 3 0 1 1 4.5 2.6c-.9.5-1.6 1.2-1.6 2.4M12 17h0"/><circle cx="12" cy="12" r="9.5"/></svg>',
+  home:'<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8M5 10v10h14V10"/></svg>',
+  arr:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>',
+  back:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>',
+  ok:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
+  no:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+  alert:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FF6678" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h0M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>',
+};
+
+/* ---------------- 상태 ---------------- */
+const state={tab:'home', rhythm:null, learn:0, quiz:null, quizBest:null, tip:null, learned:new Set()};
+
+/* ---------------- 뷰: 홈 ---------------- */
+function viewHome(){
+  const total=RHYTHMS.length, seen=state.learned.size;
+  const pct=Math.round(seen/total*100);
+  if(!state.tip){ const pool=RHYTHMS.filter(r=>!r.normal); state.tip=pool[Math.floor(Math.random()*pool.length)].id; }
+  const tip=byId(state.tip);
+  const crit=RHYTHMS.filter(r=>r.critical);
+
+  return `<div class="view">
+    <p class="eyebrow">웨어러블 심전도 판독 · 분석사 훈련</p>
+    <h1 style="margin-top:8px">파형을 읽고<br>정상과 부정맥을 가른다</h1>
+
+    <button class="hero" data-rhythm="nsr" style="margin-top:18px">
+      <div class="bar">
+        <span class="dot"></span><span class="ld">LEAD I · 25 mm/s</span>
+        <span class="rd"><b>72</b>bpm · NSR</span>
+      </div>
+      <div class="body">
+        ${traceSVG({hr:72,pWave:true,prMs:160,qrsMs:90,beats:5,normal:true},{animate:true,h:118,labels:true})}
+        <div class="cap"><span class="nm">정상 동율동 — 모든 판독의 기준</span>
+          <span class="go">P·QRS·T ${I.arr}</span></div>
+      </div>
+    </button>
+
+    <div class="prog-card" style="margin-top:14px">
+      <div class="pr"><span>학습한 리듬</span><span class="v"><b>${seen}</b> / ${total}</span></div>
+      <div class="qprog"><i style="width:${pct}%"></i></div>
+      <div class="pr"><span>퀴즈 최고 점수</span><span class="v">${state.quizBest==null?'<span style="color:var(--mute)">아직 없음</span>':'<b>'+state.quizBest+'</b> / 30'}</span></div>
+    </div>
+
+    <div class="sec-head"><span class="t">오늘의 감별 포인트</span></div>
+    <button class="tip" data-rhythm="${tip.id}">
+      <span class="mini">${traceSVG(tip.cfg,{mini:true,h:72})}</span>
+      <span class="tx">
+        <span class="nm">${tip.name}${tip.critical?'<span class="chip red" style="padding:1px 7px">응급</span>':''}</span>
+        <span class="kd">${tip.key}</span>
+      </span>
+    </button>
+
+    <div class="sec-head"><span class="t">학습 메뉴</span></div>
+    <div class="stack">
+      <button class="nav-card" data-go="learn">
+        <span class="ic" style="color:var(--ink)">${I.read}</span>
+        <span><span class="ttl">읽는 법</span><span class="dsc">파형 해부학 + 5단계 체계적 판독</span></span>
+        <span class="arr">${I.arr}</span>
+      </button>
+      <button class="nav-card" data-go="library">
+        <span class="ic" style="color:var(--ink)">${I.lib}</span>
+        <span><span class="ttl">부정맥 종류</span><span class="dsc">정상 동율동 + 부정맥 ${RHYTHMS.length-3}종 감별</span></span>
+        <span class="arr">${I.arr}</span>
+      </button>
+      <button class="nav-card" data-go="quiz">
+        <span class="ic" style="color:var(--ink)">${I.quiz}</span>
+        <span><span class="ttl">판독 퀴즈</span><span class="dsc">파형 보고 맞히기 · 즉시 피드백</span></span>
+        <span class="arr">${I.arr}</span>
+      </button>
+    </div>
+
+    <div class="sec-head"><span class="t">응급 리듬 빠른 참조</span></div>
+    <div class="crit-row">
+      ${crit.map(r=>`<button class="crit-chip" data-rhythm="${r.id}">${I.alert}
+        <span><span class="nm">${r.name}</span><span class="ab">${r.abbr}</span></span></button>`).join('')}
+    </div>
+
+    <div class="footnote">
+      <b>판독 교육용 도구입니다.</b> 실제 임상 진단·치료를 대신하지 않으며, 모든 최종 판정은 자격을 갖춘 판독자의 검토와 기관 지침을 따릅니다.
+      체계적 판독 순서와 정상 기준치는 표준 12유도 판독법에, 신호 품질·조기수축 감별 항목은 단일 유도 웨어러블 판독 연구에 근거합니다.
+    </div>
+  </div>`;
+}
+
+/* ---------------- 뷰: 읽는 법 ---------------- */
+const LEARN_TABS=[
+  {key:'p',lab:'P파',cfg:{hr:60,pWave:true,prMs:160,qrsMs:90,beats:3,normal:true},
+   title:'P파 — 심방 탈분극',desc:'동결절에서 시작된 신호가 양쪽 심방으로 퍼지는 과정. 부드럽고 둥근 곡선이며 II에서 양성이다.',meta:'폭 ≤120ms · 모든 QRS를 1:1로 선행'},
+  {key:'pr',lab:'PR',cfg:{hr:60,pWave:true,prMs:160,qrsMs:90,beats:3,normal:true},
+   title:'PR 간격 — 방실 전도',desc:'심방에서 심실로 신호가 전달되는 시간. 방실결절에서 약간 지연된다. 길어지면 방실차단을 의심.',meta:'120–200ms · P 시작부터 QRS 시작까지'},
+  {key:'qrs',lab:'QRS',cfg:{hr:60,pWave:true,prMs:160,qrsMs:90,beats:3,normal:true},
+   title:'QRS군 — 심실 탈분극',desc:'심실이 수축하는 순간. 가장 크고 뾰족한 파형. 넓어지면(≥120ms) 심실 기원 또는 각차단을 의심.',meta:'< 120ms · 좁고 빠른 스파이크'},
+  {key:'t',lab:'T파',cfg:{hr:60,pWave:true,prMs:160,qrsMs:90,beats:3,normal:true},
+   title:'T파 — 심실 재분극',desc:'심실이 이완을 준비하는 과정. QRS보다 완만하고 둥글다. QRS와 같은 방향인 것이 정상.',meta:'QRS와 동일 방향 · 대칭이면 주의'},
+];
+function viewLearn(){
+  const s=LEARN_TABS[state.learn];
+  return `<div class="view">
+    <p class="eyebrow">읽는 법 · STEP 1</p>
+    <h2 style="margin-top:6px">한 박동의 해부학</h2>
+    <p class="lead">정상 파형을 먼저 몸에 익힌다. 무엇이 정상인지 알아야 무엇이 이상한지 보인다.</p>
+
+    <div class="seg-tabs">
+      ${LEARN_TABS.map((t,i)=>`<button data-learn="${i}" class="${i===state.learn?'on':''}">${t.lab}</button>`).join('')}
+    </div>
+    ${traceSVG(s.cfg,{animate:true,h:124})}
+    <div class="card" style="margin-top:14px">
+      <h3>${s.title}</h3>
+      <p style="font-size:13.5px;color:var(--ink-soft);margin-top:7px">${s.desc}</p>
+      <p class="mono" style="font-size:12px;color:var(--teal);margin-top:10px">${s.meta}</p>
+    </div>
+
+    <p class="eyebrow" style="margin:28px 0 12px">정상 기준치 · Reference</p>
+    <div class="ranges">
+      ${NORMAL_RANGES.map(r=>`<div class="row"><div><div class="k">${r.k}</div><div class="ke">${r.ke}</div></div>
+        <div class="v">${r.v}<span class="u"> ${r.u}</span></div></div>`).join('')}
+    </div>
+
+    <p class="eyebrow" style="margin:30px 0 6px">읽는 법 · STEP 2</p>
+    <h2>5단계 체계적 판독</h2>
+    <p class="lead">매번 같은 순서로 읽는다. 순서를 고정하면 빨라지고, 놓치지 않는다.</p>
+    <div class="card" style="margin-top:14px">
+      ${READ_STEPS.map(s=>`<div class="check"><span class="n">${s.n}</span>
+        <div><div class="b">${s.b}</div><div class="d">${s.d}</div></div></div>`).join('')}
+    </div>
+    <button class="btn" data-go="library" style="margin-top:22px">부정맥 보기 →</button>
+  </div>`;
+}
+
+/* ---------------- 뷰: 부정맥 종류 ---------------- */
+function viewLibrary(){
+  let html=`<div class="view"><p class="eyebrow">부정맥 종류</p>
+    <h2 style="margin-top:6px">정상과 부정맥 감별</h2>
+    <p class="lead">정상 동율동을 기준으로, 각 부정맥의 "결정적 한 가지 차이"를 익힌다.</p>`;
+  CATS.forEach(cat=>{
+    html+=`<p class="cat-label">${cat}</p>`;
+    RHYTHMS.filter(r=>r.cat===cat).forEach(r=>{
+      const dot = r.critical?'var(--red)': r.normal?'var(--teal)': (r.color||'var(--ink)');
+      html+=`<button class="rhythm-row" data-rhythm="${r.id}" style="margin-bottom:8px">
+        <span class="mini">${traceSVG(r.cfg,{mini:true,h:46})}</span>
+        <span><span class="nm"><span class="dot" style="background:${dot}"></span>${r.name}
+          ${r.critical?'<span class="chip red" style="padding:1px 7px">응급</span>':''}</span>
+          <span class="ne">${r.nameEn} · ${r.abbr}</span></span>
+        <span class="arr" style="margin-left:auto;color:var(--mute)">${I.arr}</span>
+      </button>`;
+    });
+  });
+  html+=`</div>`;
+  return html;
+}
+
+/* ---------------- 뷰: 상세 ---------------- */
+function viewDetail(){
+  const r=byId(state.rhythm);
+  return `<div class="view">
+    <button class="back" data-go="library">${I.back} 부정맥</button>
+    <p class="eyebrow">${r.cat}</p>
+    <h2 style="margin-top:4px">${r.name}</h2>
+    <p class="mono" style="font-size:12px;color:var(--mute);margin-top:3px">${r.nameEn} · ${r.abbr}</p>
+
+    ${r.critical?`<div class="crit-banner" style="margin:14px 0 4px">${I.alert}
+      <span>응급 리듬 — 발견 시 상위 에스컬레이션</span></div>`:''}
+
+    <div style="margin:16px 0">${traceSVG(r.cfg,{animate:true,h:140})}</div>
+
+    <div class="keybox ${r.keyTone==='teal'?'teal':r.keyTone==='amber'?'':''}"
+      style="${r.keyTone==='amber'?'border-color:var(--amber);background:var(--amber-wash)':''}">
+      <div class="lab">이것만은 — 결정적 차이</div>
+      <div class="txt">${r.key}</div>
+    </div>
+
+    <p class="eyebrow" style="margin:22px 0 4px">판독 포인트</p>
+    <div class="card">
+      ${r.feats.map(f=>`<div class="feat"><span class="ft">${f[0]}</span><span class="fd">${f[1]}</span></div>`).join('')}
+    </div>
+
+    <div class="note" style="margin-top:16px">
+      <span class="nt">웨어러블 판독 노트</span>${r.note}
+    </div>
+
+    <button class="btn" data-go="quiz" style="margin-top:22px">퀴즈로 점검하기 →</button>
+  </div>`;
+}
+
+/* ---------------- 퀴즈 ---------------- */
+const QUIZ_COUNT=30;
+/* 진단을 바꾸지 않는 안전한 심박수 변동 범위(문제마다 파형이 달라 보이게) */
+const QVAR={ nsr:[62,98], sbrady:[40,57], stach:[104,148], afib:[88,138],
+  aflutter:[142,158], svt:[166,210], pac:[64,84], pvc:[64,84], vt:[156,196], avb3:[34,44] };
+function shuffle(a){a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+function qConfig(r){
+  const c=Object.assign({},r.cfg);
+  c.seed=(c.seed||1)+1+Math.floor(Math.random()*900);          // 노이즈/모양 변화
+  const v=QVAR[r.id]; if(v) c.hr=Math.round(v[0]+Math.random()*(v[1]-v[0]));
+  // 조기수축·해리 리듬은 박동 수 고정(구조 유지), 그 외엔 ±1 변동
+  if(!r.cfg.early && !r.cfg.dissoc && c.beats) c.beats=Math.max(3,c.beats+(Math.random()<.5?-1:0)+(Math.random()<.5?0:1));
+  return c;
+}
+function newQuiz(){
+  const order=[];
+  while(order.length<QUIZ_COUNT){ shuffle(RHYTHMS).forEach(r=>{ if(order.length<QUIZ_COUNT) order.push(r); }); }
+  const qs=order.map(r=>{
+    const wrong=shuffle(RHYTHMS.filter(x=>x.id!==r.id)).slice(0,3);
+    return {answer:r, cfg:qConfig(r), options:shuffle([r,...wrong])};
+  });
+  state.quiz={qs,i:0,score:0,picked:null,done:false};
+}
+function viewQuiz(){
+  if(!state.quiz) newQuiz();
+  const q=state.quiz;
+  if(q.done){
+    const pct=Math.round(q.score/q.qs.length*100);
+    const msg = pct>=88?'판독 감각이 안정적입니다. 응급 리듬도 놓치지 않는 수준.'
+      : pct>=63?'기본기는 탄탄합니다. 틀린 리듬의 "결정적 차이"를 부정맥 목록에서 다시 확인하세요.'
+      : '부정맥 목록에서 정상 동율동과 P파 유무부터 다시 잡아보세요.';
+    return `<div class="view"><div class="result">
+      <p class="eyebrow">판독 퀴즈 · 결과</p>
+      <div class="big" style="margin-top:18px;color:${pct>=63?'var(--teal)':'var(--red)'}">${q.score}<span class="of"> / ${q.qs.length}</span></div>
+      <p class="msg">${msg}</p>
+      <button class="btn" data-quiz="restart" style="margin-top:26px">다시 풀기</button>
+      <button class="btn ghost" data-go="library" style="margin-top:10px">부정맥 다시 보기</button>
+    </div></div>`;
+  }
+  const cur=q.qs[q.i], answered=q.picked!==null;
+  const pf=((q.i+(answered?1:0))/q.qs.length*100).toFixed(0);
+  return `<div class="view">
+    <div class="qmeta">
+      <span class="qscore mono">Q${String(q.i+1).padStart(2,'0')}/${String(q.qs.length).padStart(2,'0')}</span>
+      <span class="qprog"><i style="width:${pf}%"></i></span>
+      <span class="qscore">${q.score}점</span>
+    </div>
+    <p class="eyebrow">이 리듬은?</p>
+    <div style="margin:12px 0">${traceSVG(Object.assign({},cur.cfg,{critical:cur.answer.critical,normal:cur.answer.normal}),{h:140})}</div>
+    <div class="opts">
+      ${cur.options.map((o,idx)=>{
+        let cls='opt', mark='';
+        if(answered){
+          if(o.id===cur.answer.id){cls+=' correct';mark=I.ok;}
+          else if(o.id===q.picked){cls+=' wrong';mark=I.no;}
+        }
+        return `<button class="${cls}" data-pick="${o.id}" ${answered?'disabled':''}>
+          <span class="key">${String.fromCharCode(65+idx)}</span>${o.name}
+          ${mark?`<span class="mark">${mark}</span>`:''}</button>`;
+      }).join('')}
+    </div>
+    ${answered?feedbackBlock(cur):''}
+  </div>`;
+}
+function feedbackBlock(cur){
+  const ok=q_correct();
+  return `<div class="feedback ${ok?'ok':'no'}">
+    <div class="ttl" style="color:${ok?'var(--teal)':'var(--red)'}">
+      ${ok?I.ok+' 정답':I.no+' '+cur.answer.name}</div>
+    <div class="ex"><b>결정적 차이 ·</b> ${cur.answer.key}</div>
+  </div>
+  <button class="btn" data-quiz="next">${state.quiz.i+1<state.quiz.qs.length?'다음 문제 →':'결과 보기 →'}</button>`;
+}
+function q_correct(){const q=state.quiz;return q.picked===q.qs[q.i].answer.id;}
+
+/* ---------------- 렌더 / 라우팅 ---------------- */
+function render(){
+  const app=document.getElementById('app');
+  let v='';
+  if(state.tab==='home') v=viewHome();
+  else if(state.tab==='learn') v=viewLearn();
+  else if(state.tab==='library') v=viewLibrary();
+  else if(state.tab==='detail') v=viewDetail();
+  else if(state.tab==='quiz') v=viewQuiz();
+  app.innerHTML=v;
+  renderTabs();
+  animateTraces();
+  window.scrollTo({top:0,behavior:'instant'in window?'instant':'auto'});
+}
+function renderTabs(){
+  const tabs=[['home','홈',I.home],['learn','읽는 법',I.read],['library','부정맥',I.lib],['quiz','퀴즈',I.quiz]];
+  const active = state.tab==='detail'?'library':state.tab;
+  document.getElementById('tabbar').innerHTML=tabs.map(t=>
+    `<button data-go="${t[0]}" class="${t[0]===active?'on':''}">
+      <span class="ic">${t[2]}</span><span>${t[1]}</span></button>`).join('');
+}
+function animateTraces(){
+  document.querySelectorAll('.trace-draw').forEach(p=>{
+    try{const len=p.getTotalLength();p.style.setProperty('--len',len);}catch(e){}
+  });
+}
+
+/* ---------------- 이벤트 ---------------- */
+document.addEventListener('click',e=>{
+  const t=e.target.closest('[data-go],[data-rhythm],[data-learn],[data-pick],[data-quiz]');
+  if(!t) return;
+  if(t.dataset.go){ state.tab=t.dataset.go; if(t.dataset.go==='quiz'&&(!state.quiz||state.quiz.done)) {} render(); }
+  else if(t.dataset.rhythm){ state.rhythm=t.dataset.rhythm; state.learned.add(t.dataset.rhythm); state.tab='detail'; render(); }
+  else if(t.dataset.learn!=null){ state.learn=+t.dataset.learn; render(); }
+  else if(t.dataset.pick){ if(state.quiz.picked===null){ state.quiz.picked=t.dataset.pick;
+      if(q_correct()) state.quiz.score++; render(); } }
+  else if(t.dataset.quiz==='next'){ const q=state.quiz;
+      if(q.i+1<q.qs.length){q.i++;q.picked=null;} else {q.done=true;
+        state.quizBest = state.quizBest==null ? q.score : Math.max(state.quizBest,q.score); } render(); }
+  else if(t.dataset.quiz==='restart'){ newQuiz(); render(); }
+});
+
+render();
+</script>
+</body>
+</html>
