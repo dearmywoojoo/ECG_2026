@@ -111,9 +111,9 @@
 
   /* ---- learn steps ---- */
   .seg-tabs{display:flex;gap:6px;margin:14px 0}
-  .seg-tabs button{flex:1;font-family:var(--mono);font-size:12px;font-weight:500;
-    padding:8px 4px;border-radius:9px;border:1px solid var(--line);color:var(--mute);
-    background:var(--card);transition:all .15s}
+  .seg-tabs button{flex:1;font-family:var(--mono);font-size:10.5px;font-weight:500;
+    padding:8px 3px;border-radius:9px;border:1px solid var(--line);color:var(--mute);
+    background:var(--card);transition:all .15s;white-space:nowrap;letter-spacing:-0.01em}
   .seg-tabs button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
 
   /* ---- checklist ---- */
@@ -264,7 +264,7 @@
   <div class="topbar">
     <span class="pulse"></span>
     <span class="brand">ECG&nbsp;Reading&nbsp;Trainer</span>
-    <span class="sub" id="topSub">LEAD&nbsp;I · 25 mm/s</span>
+    <span class="sub" id="topSub">10 mm/mV · 25 mm/s</span>
   </div>
   <div id="app"></div>
 </div>
@@ -286,57 +286,88 @@ function ecgPath(o){
     qrsMs:90, qrsAmp:1, wide:false, irregular:false, fib:false,
     flutter:false, dissoc:false, early:[], seed:1, labels:false
   }, o);
-  const W=o.width, H=o.height, base=H*0.62;
+  const W=o.width, H=o.height, base=H*0.60;
   const rr=(60/o.hr)*1000;
   const total=o.beats*rr;
   const px=ms=>(ms/total)*W;
   const rand=n=>{const x=Math.sin(o.seed*97.3+n*41.7)*9999;return x-Math.floor(x);};
-  const marks=[];           // {x,t} segment labels
-
-  /* 이벤트를 시간순으로 모은 뒤 한 번에 그린다 → 해리(dissociation) 표현 가능 */
-  const ev=[];   // {ms, type:'P'|'QRS'|'T'|'F'|'fib', wide, amp}
+  const inv=o.inverted?-1:1;
+  const marks=[];
+  const ev=[];
   const amp1=o.qrsAmp;
+
+  // 방실차단 전도 규칙
+  function blockConductor(t){
+    if(t==='wenckebach') return i=>{const c=i%4; return c<3?{ok:true,pr:150+c*65}:{ok:false};};
+    if(t==='mobitz2')    return i=>({ok:(i%4!==3),pr:185});
+    if(t==='2to1')       return i=>({ok:(i%2===0),pr:180});
+    if(t==='high')       return i=>({ok:(i%3===0),pr:185});
+    return i=>({ok:true,pr:o.prMs});
+  }
 
   function buildBeats(){
     let t=rr*0.34;
     for(let b=0;b<o.beats;b++){
       let thisRR=rr;
-      if(o.irregular) thisRR=rr*(0.6+rand(b)*0.72);
+      if(o.sinusArr) thisRR=rr*(1+0.20*Math.sin(b*1.25+0.6));   // 호흡성 변동
+      else if(o.irregular) thisRR=rr*(0.6+rand(b)*0.72);
       const isEarly=o.early.indexOf(b)>=0;
-      if(isEarly) thisRR=rr*0.52;
+      if(isEarly) thisRR=rr*0.5;
+      const skip = o.skip && o.skip.indexOf(b)>=0;               // 휴지(dropped beat)
       const qrsAt=t;
-      const wideBeat = o.wide || (isEarly && o.earlyWide);
 
-      // 심방 활동
-      if(o.fib){ ev.push({ms:qrsAt, type:'fib', from:qrsAt-thisRR}); }
-      else if(o.flutter){ /* F파는 일괄 처리 */ }
-      else if(o.pWave && !isEarly){ ev.push({ms:qrsAt-o.prMs, type:'P'}); }
-      else if(isEarly && o.pEarly){ ev.push({ms:qrsAt-o.prMs*0.7, type:'P', ectopic:true}); }
+      let wide=o.wide, morph=o.morph;
+      if(o.intermittent){ wide=(b%2===1); morph=wide?(o.morph||'l'):null; } // 간헐적 각차단
+      if(o.alt){ wide=true; morph=(b%2===0)?'r':'l'; }                      // 교대성 각차단
+      if(isEarly && o.earlyWide){ wide=true; morph='pvc'; }
 
-      // QRS + T
-      ev.push({ms:qrsAt, type:'QRS', wide:wideBeat, amp:wideBeat?amp1*1.05:amp1, ectopic:isEarly});
-      ev.push({ms:qrsAt + (wideBeat?255:225), type:'T', wide:wideBeat, amp:wideBeat?amp1:amp1});
+      if(!skip){
+        // 심방 활동
+        if(o.fib){ ev.push({ms:qrsAt, type:'fib'}); }
+        else if(o.flutter){ /* F파 일괄 */ }
+        else if(o.junctional){ if(o.retroP) ev.push({ms:qrsAt+o.qrsMs*0.5+35, type:'P', inverted:true, ectopic:true}); }
+        else if(o.mat){ ev.push({ms:qrsAt-o.prMs, type:'P', morphP:(b%3)}); }   // 다소성: P 모양 변화
+        else if(o.pWave && !isEarly){ ev.push({ms:qrsAt-o.prMs, type:'P'}); }
+        else if(isEarly && o.pEarly){ ev.push({ms:qrsAt-o.prMs*0.7, type:'P', ectopic:true}); }
 
-      if(o.labels && b===1){ marks.push({x:px(qrsAt-o.prMs),t:'P'}); marks.push({x:px(qrsAt),t:'QRS'}); marks.push({x:px(qrsAt+225),t:'T'}); }
+        if(o.pace) ev.push({ms:qrsAt-20, type:'PACE'});                        // 페이스메이커 스파이크
 
-      t = isEarly ? qrsAt + rr*1.42 /* 보상성 휴지기 */ : qrsAt + thisRR;
+        ev.push({ms:qrsAt, type:'QRS', wide:wide, amp:(wide?1.05:1)*amp1, morph:morph, delta:o.delta, ectopic:isEarly});
+        ev.push({ms:qrsAt + (wide?255:225), type:'T', wide:wide});
+
+        if(o.labels && b===1){ marks.push({x:px(qrsAt-o.prMs),t:'P'}); marks.push({x:px(qrsAt),t:'QRS'}); marks.push({x:px(qrsAt+225),t:'T'}); }
+      }
+      t = isEarly ? qrsAt + rr*1.42 : qrsAt + thisRR;
     }
   }
 
-  if(o.dissoc){
-    /* 완전 방실차단: 심방(P)과 심실(QRS+T)이 서로 다른 박자로 독립 박동 */
-    const vRR=rr;                        // 느린 심실 이탈리듬
-    const aRR=(60/(o.atrialHr||76))*1000;// 빠른 규칙적 심방
+  if(o.chaos){ /* 심실세동: 그리기 단계에서 직접 처리 */ }
+  else if(o.dissoc){
+    const aRR=(60/(o.atrialHr||76))*1000;
     for(let m=rr*0.2;m<total;m+=aRR) ev.push({ms:m,type:'P'});
-    for(let m=rr*0.45;m<total;m+=vRR){ ev.push({ms:m,type:'QRS',wide:true,amp:0.85}); ev.push({ms:m+255,type:'T',wide:true,amp:0.8}); }
+    for(let m=rr*0.45;m<total;m+=rr){ ev.push({ms:m,type:'QRS',wide:true,amp:0.85,morph:'l'}); ev.push({ms:m+255,type:'T',wide:true,amp:0.8}); }
     if(o.labels){ marks.push({x:px(rr*0.2),t:'P'}); marks.push({x:px(rr*0.45),t:'QRS'}); }
-  } else if(o.flutter){
-    buildBeats();
-  } else {
-    buildBeats();
   }
+  else if(o.block){
+    const cd=blockConductor(o.block.type);
+    for(let i=0;i<o.beats;i++){
+      const pAt=rr*0.25+i*rr; if(pAt>=total) break;
+      ev.push({ms:pAt,type:'P'});
+      const c=cd(i);
+      if(c.ok){ const q=pAt+c.pr; ev.push({ms:q,type:'QRS',wide:o.block.wide,amp:1,morph:o.block.morph}); ev.push({ms:q+(o.block.wide?255:225),type:'T',wide:o.block.wide}); }
+    }
+  }
+  else if(o.poly){
+    let t=rr*0.3;
+    for(let b=0;b<o.beats*2;b++){
+      if(t>total) break;
+      const env=Math.sin((b/(o.beats*2))*Math.PI*2)*0.9;   // 진폭이 비틀리는 다형성
+      ev.push({ms:t, type:'QRS', wide:true, amp:1, poly:env});
+      t+=rr*0.5;
+    }
+  }
+  else { buildBeats(); }
 
-  // 심방조동 F파를 이벤트 스트림에 포함(시간순 처리로 획 겹침 방지)
   if(o.flutter){ for(let m=85;m<total;m+=170) ev.push({ms:m,type:'F'}); }
   ev.sort((a,b)=>a.ms-b.ms);
 
@@ -344,18 +375,26 @@ function ecgPath(o){
   const nextQrsAfter=ms=>{ for(const q of qrsTimes){ if(q>ms+8) return q; } return Infinity; };
   const nearQrs=(ms,win)=>qrsTimes.some(q=>Math.abs(q-ms)<win);
 
-  /* ---- 한붓그리기: 커서(cx)는 항상 전진만 한다 ---- */
+  /* ---- 한붓그리기: 커서(cx)는 항상 전진만 ---- */
   let d=`M0 ${base.toFixed(1)}`;
   let cx=0;
   const L=(ms,y)=>{ if(ms<cx) return; d+=` L${px(ms).toFixed(1)} ${y.toFixed(1)}`; cx=ms; };
   const Q=(cms,cy,ms,y)=>{ if(ms<cx) return; d+=` Q${px(cms).toFixed(1)} ${cy.toFixed(1)} ${px(ms).toFixed(1)} ${y.toFixed(1)}`; cx=ms; };
   const toBase=ms=>{ if(ms>cx) L(ms,base); };
 
+  if(o.chaos){
+    // 심실세동: 조직화된 복합체 없는 혼란 파형
+    const steps=Math.round(total/26);
+    for(let i=1;i<=steps;i++){ const ms=total*(i/steps); const amp=16+rand(i)*22; L(ms, base-(rand(i*1.7)*2-1)*amp); }
+    L(total,base);
+    return {d, marks, W, H, base};
+  }
+
   for(const e of ev){
     if(e.type==='P'){
-      // QRS~T 구간에 묻히는 P는 생략(묻힌 P) → 해리에서도 깔끔하게 행진
       if(nearQrs(e.ms,150) || qrsTimes.some(q=>e.ms>q && e.ms<q+330)) continue;
-      const w=120,h=9*(e.ectopic?0.8:1), s=e.ms-w/2, en=e.ms+w/2;
+      const pinv=(e.inverted?-1:1)*inv;
+      const w=120, h=9*(e.ectopic?0.85:1)*(e.morphP!=null?[1,0.7,1.25][e.morphP]:1)*pinv, s=e.ms-w/2, en=e.ms+w/2;
       if(en<=cx) continue;
       toBase(s); Q(e.ms, base-h, en, base);
     } else if(e.type==='F'){
@@ -366,27 +405,60 @@ function ecgPath(o){
       const span=Math.max(rr*0.55,200), steps=Math.max(7,Math.round(span/48)), s0=e.ms-span;
       for(let i=1;i<=steps;i++){ const ms=s0+span*(i/steps); if(ms<=cx)continue; L(ms, base-(rand(i+e.ms)*2-1)*5); }
       toBase(e.ms-22);
+    } else if(e.type==='PACE'){
+      const s=e.ms-6; if(s<=cx){ continue; }
+      toBase(s); L(e.ms-3, base+8); L(e.ms-3, base-52); L(e.ms, base);  // 수직 페이싱 스파이크
     } else if(e.type==='QRS'){
-      const a=(e.wide?44:48)*(e.amp||1);
-      if(e.wide){
+      const a=(e.wide?44:48)*(e.amp||1)*inv;
+      if(e.poly!=null){
+        // 다형성(Torsades): 진폭 비틀림
+        const half=70, amp=46*(0.35+Math.abs(e.poly))*Math.sign(e.poly||1);
+        toBase(e.ms-half);
+        L(e.ms-half, base+6*Math.sign(amp));
+        Q(e.ms, base-amp, e.ms+half, base);
+        continue;
+      }
+      if(e.morph==='r'){           // RBBB: rSR' (M자, 두 번째 피크)
+        const half=76;
+        toBase(e.ms-half);
+        L(e.ms-half, base+6*inv);
+        L(e.ms-half*0.55, base-a*0.55*inv);  // r
+        L(e.ms-half*0.15, base+a*0.30*inv);  // s
+        L(e.ms+half*0.35, base-a*0.85*inv);  // R'
+        L(e.ms+half, base+4*inv);
+      } else if(e.morph==='l' || (e.wide && !e.morph)){  // LBBB / 광범위: 둔한 단일 정점
         const half=78;
         toBase(e.ms-half);
-        L(e.ms-half, base+9);
-        Q(e.ms-half*0.35, base-a, e.ms+half*0.1, base-a*0.92); // 둔하고 넓은 정점
-        L(e.ms+half, base+a*0.42);                              // 깊고 넓은 S
+        L(e.ms-half, base+9*inv);
+        Q(e.ms-half*0.35, base-a, e.ms+half*0.1, base-a*0.92);
+        L(e.ms+half, base+a*0.42*inv);
         L(e.ms+half+34, base);
-      } else {
+      } else if(e.wide){           // pvc 등 일반 광범위
+        const half=78;
+        toBase(e.ms-half);
+        L(e.ms-half, base+9*inv);
+        Q(e.ms-half*0.35, base-a, e.ms+half*0.1, base-a*0.92);
+        L(e.ms+half, base+a*0.42*inv);
+        L(e.ms+half+34, base);
+      } else if(e.delta){          // WPW: 델타파(완만한 상승)
+        const half=o.qrsMs/2;
+        toBase(e.ms-half-30);
+        Q(e.ms-half*0.7, base-a*0.32*inv, e.ms-half*0.1, base-a*0.55*inv); // 델타 슬러
+        L(e.ms+half*0.2, base-a*inv);
+        L(e.ms+half*0.6, base+a*0.22*inv);
+        L(e.ms+half, base);
+      } else {                     // 정상 좁은 QRS
         const half=o.qrsMs/2;
         toBase(e.ms-half*0.6);
-        L(e.ms-half*0.55, base+7);   // Q
-        L(e.ms, base-a);             // R
-        L(e.ms+half*0.4, base+a*0.24);// S
+        L(e.ms-half*0.55, base+7*inv);
+        L(e.ms, base-a);
+        L(e.ms+half*0.4, base+a*0.24*inv);
         L(e.ms+half*0.85, base);
       }
     } else if(e.type==='T'){
-      const w=210, h=(e.wide?-17:15)*(e.amp||1); // 광범위 QRS는 불일치(discordant) T
+      const w=210, h=(e.wide?-17:15)*(e.amp||1)*inv;
       let s=e.ms-w/2, en=Math.min(e.ms+w/2, nextQrsAfter(e.ms)-30);
-      if(en<=e.ms || en<=cx) continue;        // 다음 QRS와 겹치면 T 생략(빠른 리듬)
+      if(en<=e.ms || en<=cx) continue;
       toBase(s); Q(e.ms, base-h, en, base);
     }
   }
@@ -409,7 +481,8 @@ function traceSVG(cfg, opt){
     });
   }
   const cls = opt.animate ? 'trace-draw' : '';
-  return `<div class="trace">${opt.mini?'':'<span class="lead-tag">LEAD I</span>'}
+  const hi = opt.hiPath ? `<path d="${opt.hiPath}" fill="none" stroke="var(--red)" stroke-width="${opt.mini?2.4:3.4}" stroke-linejoin="round" stroke-linecap="round"/>` : '';
+  return `<div class="trace">
     <svg viewBox="0 0 ${r.W} ${r.H}" preserveAspectRatio="none" style="height:${opt.h||(opt.mini?54:150)}px">
       <defs>
         <pattern id="${gid}" width="13" height="13" patternUnits="userSpaceOnUse">
@@ -424,7 +497,53 @@ function traceSVG(cfg, opt){
       <rect width="${r.W}" height="${r.H}" fill="url(#${gid}b)"/>
       <path d="${r.d}" fill="none" stroke="${accent}" stroke-width="${stroke}"
             stroke-linejoin="round" stroke-linecap="round" class="${cls}"/>
+      ${hi}
       ${lbls}
+    </svg></div>`;
+}
+
+/* ---- 읽는 법: 한 박동 해부학 + 선택 구간 빨간색 강조 ---- */
+function learnTraceSVG(hl){
+  const W=760,H=150,base=Math.round(H*0.60);
+  const beats=3, rr=860, total=beats*rr, px=ms=>+( (ms/total*W).toFixed(1) );
+  const pts=[];
+  const add=(ms,y,seg)=>pts.push([ms,y,seg]);
+  const bump=(m0,m1,depth,seg,n)=>{n=n||9;const c=(m0+m1)/2,w=(m1-m0)/2;
+    for(let i=0;i<=n;i++){const ms=m0+(m1-m0)*i/n;add(ms,base-depth*(1-Math.pow((ms-c)/w,2)),seg);}};
+  add(0,base,'base');
+  for(let b=0;b<beats;b++){
+    const o=b*rr, qx=o+rr*0.52;
+    const pS=qx-175, pE=qx-115, qS=qx-32, qE=qx+46, tS=qx+150, tE=qx+335;
+    add(pS,base,'base');
+    bump(pS,pE,10,'p');
+    add(qS,base,'pr');
+    add(qS,base,'qrs'); add(qx-13,base+6,'qrs'); add(qx,base-48,'qrs'); add(qx+17,base+12,'qrs'); add(qE,base,'qrs');
+    add(tS,base,'st');
+    bump(tS,tE,15,'t');
+    add(o+rr,base,'base');
+  }
+  add(total,base,'base');
+  let full='M'+px(pts[0][0])+' '+pts[0][1];
+  for(let i=1;i<pts.length;i++) full+=' L'+px(pts[i][0])+' '+pts[i][1];
+  const hset = hl==='pr' ? ['p','pr'] : [hl];
+  let hi='',open=false;
+  for(let i=0;i<pts.length;i++){
+    const on=hset.indexOf(pts[i][2])>=0;
+    if(on){ if(!open){const pr=pts[i-1]||pts[i]; hi+=' M'+px(pr[0])+' '+pr[1]; open=true;} hi+=' L'+px(pts[i][0])+' '+pts[i][1]; }
+    else open=false;
+  }
+  const gid='ln'+Math.random().toString(36).slice(2,7);
+  return `<div class="trace">
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="height:140px">
+      <defs>
+        <pattern id="${gid}" width="13" height="13" patternUnits="userSpaceOnUse"><path d="M13 0H0V13" fill="none" stroke="var(--grid)" stroke-width="1"/></pattern>
+        <pattern id="${gid}b" width="65" height="65" patternUnits="userSpaceOnUse"><path d="M65 0H0V65" fill="none" stroke="var(--grid-bold)" stroke-width="1.1"/></pattern>
+      </defs>
+      <rect width="${W}" height="${H}" fill="#FFFCFC"/>
+      <rect width="${W}" height="${H}" fill="url(#${gid})"/>
+      <rect width="${W}" height="${H}" fill="url(#${gid}b)"/>
+      <path d="${full}" fill="none" stroke="var(--ink)" stroke-width="2.3" stroke-linejoin="round" stroke-linecap="round"/>
+      <path d="${hi}" fill="none" stroke="var(--red)" stroke-width="3.6" stroke-linejoin="round" stroke-linecap="round"/>
     </svg></div>`;
 }
 
@@ -447,82 +566,227 @@ const READ_STEPS=[
 ];
 
 const RHYTHMS=[
-  /* ---- 정상 · 동성 ---- */
-  {id:'nsr',cat:'정상 · 동성',name:'정상 동율동',nameEn:'Normal Sinus Rhythm',abbr:'NSR',
-   normal:true, color:'var(--teal)',
+  /* ============ 1. 정상 · 동성 리듬 ============ */
+  {id:'nsr',cat:'정상 · 동성 리듬',name:'정상 동율동',nameEn:'Normal Sinus Rhythm',abbr:'NSR',
+   normal:true,keyTone:'teal',
    key:'모든 QRS 앞에 규칙적인 양성 P파, 60–100회, R-R 규칙. 모든 판독의 기준선.',
-   keyTone:'teal',
-   feats:[['리듬','R-R 규칙적, P-P 규칙적'],['P파','II에서 양성, 모든 QRS를 1:1로 선행'],['PR','120–200ms로 일정'],['QRS','좁음(<120ms)']],
-   note:'NSR을 기준점으로 삼아라. "정상이 아닌 이유"를 한 가지라도 찾지 못하면 정상으로 판정한다.',
+   feats:[['리듬','R-R·P-P 모두 규칙적'],['P파','양성, 모든 QRS를 1:1 선행'],['PR','120–200ms 일정'],['QRS','좁음(<120ms)']],
+   note:'NSR을 기준점으로 삼는다. "정상이 아닌 이유"를 하나도 못 찾으면 정상으로 판정한다.',
    cfg:{hr:72,pWave:true,prMs:160,qrsMs:90,beats:5,normal:true}},
 
-  {id:'sbrady',cat:'정상 · 동성',name:'동성 서맥',nameEn:'Sinus Bradycardia',abbr:'SB',
-   color:'var(--teal)',
-   key:'파형은 정상 동율동인데 심박수만 60 미만. 운동선수·수면 중에는 정상 변이.',
-   feats:[['리듬','규칙적'],['P파','정상, 1:1 선행'],['심박수','< 60 bpm'],['맥락','수면·서맥 약물·운동선수에서 흔함']],
-   note:'웨어러블에서 수면 중 40대 bpm은 흔한 정상 소견이다. 증상·맥락 없이 "서맥"만으로 과진단하지 않는다.',
+  {id:'sbrady',cat:'정상 · 동성 리듬',name:'동성 서맥',nameEn:'Sinus Bradycardia',abbr:'SB',
+   normal:true,
+   key:'파형은 정상인데 심박수만 60 미만. 수면·운동선수에서는 정상 변이.',
+   feats:[['리듬','규칙적'],['P파','정상, 1:1 선행'],['심박수','< 60 bpm'],['맥락','수면·약물·운동선수']],
+   note:'수면 중 40대 bpm은 흔한 정상 소견. 증상·맥락 없이 서맥만으로 과진단하지 않는다.',
    cfg:{hr:46,pWave:true,prMs:170,qrsMs:90,beats:4,normal:true}},
 
-  {id:'stach',cat:'정상 · 동성',name:'동성 빈맥',nameEn:'Sinus Tachycardia',abbr:'ST',
-   color:'var(--teal)',
-   key:'정상 동율동이 단순히 빨라진 것(>100). P파가 보이면 SVT가 아니라 동성 빈맥.',
-   feats:[['리듬','규칙적'],['P파','각 QRS 앞에 존재(빠르면 T에 겹칠 수 있음)'],['심박수','100–150 bpm'],['감별','P파 확인 → SVT와 구분']],
-   note:'운동·발열·불안·카페인으로 흔히 유발. P파를 찾을 수 있으면 동성 빈맥, 못 찾으면 SVT 의심.',
+  {id:'stach',cat:'정상 · 동성 리듬',name:'동성 빈맥',nameEn:'Sinus Tachycardia',abbr:'ST',
+   normal:true,
+   key:'정상 동율동이 빨라진 것(>100). P파가 보이면 SVT가 아니라 동성 빈맥.',
+   feats:[['리듬','규칙적'],['P파','각 QRS 앞에 존재'],['심박수','100–150 bpm'],['감별','P파 확인 → SVT 배제']],
+   note:'운동·발열·불안·카페인으로 유발. P파를 찾으면 동성 빈맥, 못 찾으면 SVT 의심.',
    cfg:{hr:130,pWave:true,prMs:140,qrsMs:85,beats:7,normal:true}},
 
-  /* ---- 심방 부정맥 ---- */
+  {id:'sarr',cat:'정상 · 동성 리듬',name:'동성 부정맥',nameEn:'Sinus Arrhythmia',abbr:'SA',
+   normal:true,
+   key:'P-QRS는 정상인데 R-R가 호흡에 따라 점진적으로 늘었다 줄었다 한다.',
+   feats:[['리듬','호흡성으로 R-R 변동(들숨 빨라짐)'],['P파','정상, 모양 일정'],['QRS','좁음'],['감별','점진적 변동 → AF의 불규칙과 다름']],
+   note:'젊은 사람·소아에서 흔한 정상. 변동이 "갑작스럽지 않고 매끄럽게" 변하면 동성 부정맥이다.',
+   cfg:{hr:70,pWave:true,prMs:160,qrsMs:90,beats:6,sinusArr:true,normal:true}},
+
+  {id:'spause',cat:'정상 · 동성 리듬',name:'동결절 휴지',nameEn:'Sinus Pause',abbr:'SP',
+   color:'var(--amber)',keyTone:'amber',
+   key:'정상 리듬 도중 P파가 한 번 빠져 평평한 휴지가 생긴다.',
+   feats:[['소견','P-QRS-T가 통째로 한 박 누락'],['전후','휴지 전후는 정상 동율동'],['길이','PP의 정수배가 아님'],['증상','길면 어지럼·실신']],
+   note:'웨어러블에서 짧은 휴지는 흔하지만, 3초 이상이거나 증상 동반 시 기록·상위 보고한다.',
+   cfg:{hr:75,pWave:true,prMs:160,qrsMs:90,beats:7,skip:[3]}},
+
+  {id:'sarrest',cat:'정상 · 동성 리듬',name:'동정지',nameEn:'Sinus Arrest',abbr:'SA arrest',
+   color:'var(--amber)',keyTone:'amber',
+   key:'동결절이 더 길게 멈춰 여러 박이 사라진다. 휴지가 PP의 정수배와 무관.',
+   feats:[['소견','복수의 박동 누락(긴 평탄선)'],['길이','PP 정수배와 무관'],['탈출','접합부·심실 이탈리듬 동반 가능'],['위험','길면 실신·정지']],
+   note:'휴지 동안 이탈리듬이 안 나오면 위험하다. 긴 평탄선 + 증상은 응급으로 본다.',
+   cfg:{hr:75,pWave:true,prMs:160,qrsMs:90,beats:8,skip:[3,4]}},
+
+  {id:'sablock',cat:'정상 · 동성 리듬',name:'동방차단',nameEn:'SA Block',abbr:'SA block',
+   color:'var(--amber)',keyTone:'amber',
+   key:'P파 한 개가 통째로 빠지는데, 휴지 길이가 정상 PP 간격의 정확히 배수.',
+   feats:[['소견','P-QRS 한 주기 누락'],['길이','휴지 = PP의 정수배(2배)'],['감별','정수배 → 동결절 휴지와 구분'],['기전','동결절→심방 전도 차단']],
+   note:'누락 구간이 "기존 PP를 정확히 2칸" 건너뛰면 동방차단, 어중간하면 동결절 휴지로 본다.',
+   cfg:{hr:75,pWave:true,prMs:160,qrsMs:90,beats:7,skip:[4]}},
+
+  /* ============ 2. 심방 부정맥 ============ */
+  {id:'pac',cat:'심방 부정맥',name:'심방조기수축',nameEn:'Premature Atrial Contraction',abbr:'PAC',
+   color:'var(--amber)',keyTone:'amber',
+   key:'정상 리듬 사이에 이른 박동. 모양은 정상이나 P파가 다르고 타이밍이 빠르다.',
+   feats:[['타이밍','예정보다 이른 QRS'],['P파','조기 박동의 P 모양이 다름(이소성)'],['QRS','좁음(정상 전도)'],['주의','잦으면 단일 유도에서 AF로 오인']],
+   note:'조기수축이 잦으면 R-R가 들쭉날쭉해 AF처럼 보인다. 이른 P파가 살아 있으면 AF가 아니라 PAC다.',
+   cfg:{hr:72,pWave:true,prMs:160,qrsMs:90,beats:6,early:[3],pEarly:true,seed:6}},
+
   {id:'afib',cat:'심방 부정맥',name:'심방세동',nameEn:'Atrial Fibrillation',abbr:'AF',
    key:'P파 소실 + 기저선 세동파 + R-R "불규칙하게 불규칙". 웨어러블 판독의 핵심 표적.',
-   feats:[['P파','뚜렷한 P파 없음, 거친 세동파(f wave)'],['리듬','R-R 간격이 불규칙하게 불규칙'],['QRS','대개 좁음'],['위험','심방 수축 소실 → 혈전·뇌졸중 위험 ↑']],
-   note:'AI가 AF로 플래그해도 최종 판정은 사람이 한다. 조기수축이 잦으면 가짜 불규칙으로 보일 수 있으니, 진짜 P파 소실인지 반드시 확인한다.',
+   feats:[['P파','뚜렷한 P 없음, 거친 세동파(f)'],['리듬','R-R 불규칙하게 불규칙'],['QRS','대개 좁음'],['위험','심방 수축 소실 → 뇌졸중 위험 ↑']],
+   note:'AI가 AF로 플래그해도 최종 판정은 사람이 한다. 조기수축과 헷갈리지 말고 진짜 P파 소실인지 확인한다.',
    cfg:{hr:96,pWave:false,fib:true,irregular:true,qrsMs:90,beats:7,seed:3}},
 
   {id:'aflutter',cat:'심방 부정맥',name:'심방조동',nameEn:'Atrial Flutter',abbr:'AFL',
-   key:'톱니 모양 F파가 일정 간격으로 반복. 흔히 2:1 전도로 심실 약 150회.',
-   feats:[['F파','규칙적 톱니파(sawtooth), 심방 250–350회'],['전도','2:1·3:1 등 일정 비율'],['리듬','심실은 규칙적인 경우가 많음'],['단서','심실 150회 고정이면 2:1 조동 의심']],
-   note:'심실 박동이 "딱 150회"로 규칙적이면 숨은 2:1 조동을 의심하라. 단일 유도에서는 F파가 T파에 겹쳐 놓치기 쉽다.',
+   key:'톱니 모양 F파가 일정 간격 반복. 흔히 2:1 전도로 심실 약 150회.',
+   feats:[['F파','규칙적 톱니파, 심방 250–350회'],['전도','2:1·3:1 등 일정 비율'],['리듬','심실은 규칙적인 경우 많음'],['단서','심실 150 고정 → 2:1 의심']],
+   note:'심실이 "딱 150회"로 규칙적이면 숨은 2:1 조동을 의심한다. 단일 유도에선 F파가 T에 겹쳐 놓치기 쉽다.',
    cfg:{hr:150,pWave:false,flutter:true,qrsMs:90,beats:6,seed:2}},
 
-  {id:'svt',cat:'심방 부정맥',name:'발작성 상심실성 빈맥',nameEn:'Paroxysmal SVT',abbr:'SVT',
+  {id:'svt',cat:'심방 부정맥',name:'발작성 상심실성 빈맥',nameEn:'Paroxysmal SVT',abbr:'PSVT',
    key:'좁은 QRS인데 150–250회로 매우 빠르고 규칙적. 갑자기 시작·종료.',
-   feats:[['리듬','규칙적, 매우 빠름'],['QRS','좁음(상심실 기원)'],['P파','잘 안 보이거나 QRS에 묻힘'],['경과','발작성 — 급발·급종료']],
-   note:'P파가 안 보이고 규칙적·빠른 좁은 QRS면 SVT. P파가 보이면 동성 빈맥으로 재분류.',
+   feats:[['리듬','규칙적, 매우 빠름'],['QRS','좁음(상심실 기원)'],['P파','안 보이거나 QRS에 묻힘'],['경과','발작성 — 급발·급종료']],
+   note:'P파 없이 규칙적·빠른 좁은 QRS면 SVT. P파가 보이면 동성 빈맥으로 재분류한다.',
    cfg:{hr:188,pWave:false,prMs:100,qrsMs:80,beats:9}},
 
-  {id:'pac',cat:'심방 부정맥',name:'심방조기수축',nameEn:'Premature Atrial Contraction',abbr:'PAC',
-   color:'var(--amber)',
-   key:'정상 리듬 사이에 이른 박동이 끼어든다. 모양은 정상이지만 타이밍이 빠르다.',
-   feats:[['타이밍','예정보다 이른 QRS'],['P파','조기 박동의 P 모양이 다름(이소성)'],['QRS','좁음(정상 전도)'],['주의','잦으면 단일 유도에서 AF로 오인']],
-   note:'조기수축이 잦으면 R-R가 들쭉날쭉해 AF처럼 보인다. 이른 박동 뒤에 정상 리듬이 회복되고 P파가 살아 있으면 AF가 아니라 PAC다.',
-   keyTone:'amber',
-   cfg:{hr:72,pWave:true,prMs:160,qrsMs:90,beats:6,early:[3],pEarly:true,seed:6}},
+  {id:'mat',cat:'심방 부정맥',name:'다소성 심방빈맥',nameEn:'Multifocal Atrial Tachycardia',abbr:'MAT',
+   key:'빠르고(>100) 불규칙한데, P파 모양이 세 가지 이상으로 제각각.',
+   feats:[['P파','형태가 3종 이상(다소성)'],['리듬','불규칙'],['심박수','> 100 bpm'],['감별','P파가 보임 → AF와 구분']],
+   note:'폐질환(COPD)에서 흔하다. AF와 달리 뚜렷한 P파가 여러 모양으로 존재하는 점이 결정적 차이다.',
+   cfg:{hr:120,pWave:true,prMs:150,qrsMs:88,beats:7,mat:true,irregular:true,seed:9}},
 
-  /* ---- 심실 부정맥 ---- */
+  /* ============ 3. 접합부(Junctional) 리듬 ============ */
+  {id:'jrhythm',cat:'접합부 리듬',name:'접합부 이탈리듬',nameEn:'Junctional Rhythm',abbr:'JR',
+   key:'정상 P파 없는 좁은 QRS가 느린 속도(40–60)로 규칙적. 방실접합부가 주도.',
+   feats:[['P파','정상 P 없음(역행 P 가능)'],['QRS','좁음'],['심박수','40–60 bpm'],['기전','동결절 부전 시 접합부 탈출']],
+   note:'좁은 QRS + 정상 P 소실 + 느린 규칙 리듬이면 접합부 이탈리듬. 역행 P가 QRS 앞뒤에 보일 수 있다.',
+   cfg:{hr:48,pWave:false,qrsMs:88,beats:4,junctional:true,retroP:true,seed:14}},
+
+  {id:'jtach',cat:'접합부 리듬',name:'접합부 빈맥',nameEn:'Junctional Tachycardia',abbr:'JT',
+   key:'좁은 QRS가 100회 이상으로 빠른데 정상 선행 P파가 없다.',
+   feats:[['P파','정상 선행 P 없음'],['QRS','좁음'],['심박수','> 100 bpm'],['감별','P 없는 규칙 좁은 빈맥']],
+   note:'접합부가 빨리 흥분. 좁은 QRS 빈맥에서 정상 P가 없으면 접합부 기원을 고려한다.',
+   cfg:{hr:115,pWave:false,qrsMs:85,beats:7,junctional:true,seed:15}},
+
+  {id:'jpc',cat:'접합부 리듬',name:'접합부 조기수축',nameEn:'Junctional Premature Beat',abbr:'JPC',
+   color:'var(--amber)',keyTone:'amber',
+   key:'이른 박동인데 PVC와 달리 QRS가 좁고, PAC와 달리 정상 선행 P가 없다.',
+   feats:[['타이밍','예정보다 이른 박동'],['QRS','좁음(접합부 기원)'],['P파','선행 정상 P 없음'],['감별','좁은 조기박동 + P 없음']],
+   note:'조기 박동이 좁은데 앞에 정상 P가 없으면 접합부 조기수축. 대개 양성이다.',
+   cfg:{hr:70,pWave:true,prMs:160,qrsMs:90,beats:6,early:[3],seed:7}},
+
+  /* ============ 4. 심실 부정맥 ============ */
   {id:'pvc',cat:'심실 부정맥',name:'심실조기수축',nameEn:'Premature Ventricular Contraction',abbr:'PVC',
-   color:'var(--amber)',
-   key:'이르게 나오는 넓고 기괴한 QRS. 앞에 P파 없고 보상성 휴지기가 따른다.',
-   feats:[['타이밍','예정보다 이른 박동'],['QRS','넓고(≥120ms) 모양이 기괴'],['P파','조기 박동 앞에 P 없음'],['뒤','보상성 휴지기(긴 쉼)']],
-   note:'단발성 PVC는 흔하고 대개 양성이다. 다만 잦거나 연달아 나오면(2연발·3연발) VT로 진행할 수 있어 빈도·연속성을 기록한다.',
-   keyTone:'amber',
+   color:'var(--amber)',keyTone:'amber',
+   key:'이르게 나오는 넓고 기괴한 QRS. 앞에 P파 없고 보상성 휴지가 따른다.',
+   feats:[['타이밍','예정보다 이른 박동'],['QRS','넓고(≥120ms) 기괴'],['P파','조기 박동 앞에 P 없음'],['뒤','보상성 휴지(긴 쉼)']],
+   note:'단발성 PVC는 흔하고 대개 양성. 잦거나 연달아(2·3연발) 나오면 VT 위험이라 빈도·연속성을 기록한다.',
    cfg:{hr:72,pWave:true,prMs:160,qrsMs:90,beats:6,early:[3],earlyWide:true,seed:8}},
 
   {id:'vt',cat:'심실 부정맥',name:'심실빈맥',nameEn:'Ventricular Tachycardia',abbr:'VT',
    critical:true,
-   key:'넓은 QRS가 100–250회로 연속. 응급 리듬 — 넓은 QRS 빈맥은 VT부터 배제.',
-   feats:[['QRS','넓음(≥120ms), 단일 형태가 많음'],['리듬','대개 규칙적, 빠름'],['해리','방실 해리 가능(P와 무관)'],['분류','≥30초 지속 = sustained VT']],
-   note:'무맥성 VT는 즉시 제세동 적응증. 분석 화면에서 넓은 QRS 빈맥은 SVT 변형보다 VT를 먼저 의심하고 상위로 에스컬레이션한다.',
-   cfg:{hr:170,pWave:false,qrsMs:150,wide:true,qrsAmp:1.1,beats:7,critical:true,seed:4}},
+   key:'넓은 QRS가 100–250회로 연속. 넓은 QRS 빈맥은 VT부터 배제한다.',
+   feats:[['QRS','넓음(≥120ms), 단일 형태'],['리듬','대개 규칙적, 빠름'],['해리','방실 해리 가능'],['분류','≥30초 = sustained VT']],
+   note:'무맥성 VT는 즉시 제세동 적응증. 넓은 QRS 빈맥은 SVT 변형보다 VT를 먼저 의심하고 상위 에스컬레이션한다.',
+   cfg:{hr:170,pWave:false,qrsMs:150,wide:true,morph:'pvc',qrsAmp:1.1,beats:7,critical:true,seed:4}},
 
-  /* ---- 전도 장애 ---- */
-  {id:'avb3',cat:'전도 장애',name:'3도 방실차단',nameEn:'Complete AV Block',abbr:'CAVB',
+  {id:'torsades',cat:'심실 부정맥',name:'다형성 심실빈맥(TdP)',nameEn:'Torsades de Pointes',abbr:'TdP',
+   critical:true,
+   key:'넓은 QRS의 축이 기저선을 중심으로 비틀리며 진폭이 커졌다 작아진다.',
+   feats:[['QRS','형태가 계속 변하는 다형성'],['진폭','기저선 기준 꼬임(twisting)'],['배경','QT 연장에서 발생'],['위험','VF로 악화 가능']],
+   note:'QT 연장 + 비틀리는 넓은 빈맥이면 TdP. 마그네슘 적응증이며 즉시 응급. VF로 진행할 수 있다.',
+   cfg:{hr:210,poly:true,beats:6,critical:true,seed:11}},
+
+  {id:'vfib',cat:'심실 부정맥',name:'심실세동',nameEn:'Ventricular Fibrillation',abbr:'VF',
+   critical:true,
+   key:'식별 가능한 QRS·P·T가 전혀 없는 무질서한 파형. 심정지 = 즉시 제세동.',
+   feats:[['파형','조직화된 복합체 없음'],['진폭','거칠다(coarse)→가늘다(fine)'],['상태','무맥성 심정지'],['처치','즉시 제세동·CPR']],
+   note:'아티팩트(근전위·움직임)와 가장 헷갈린다. 환자가 멀쩡하면 아티팩트일 가능성이 높으니 임상 상태와 함께 판단한다.',
+   cfg:{chaos:true,hr:300,beats:6,critical:true,seed:12}},
+
+  /* ============ 5. 방실 전도장애 ============ */
+  {id:'avb1',cat:'방실 전도장애',name:'1도 방실차단',nameEn:'First-degree AV Block',abbr:'1° AVB',
+   key:'모든 P가 전도되지만 PR 간격이 일정하게 길다(>200ms).',
+   feats:[['PR','> 200ms로 일정하게 길다'],['전도','P:QRS = 1:1 유지'],['리듬','규칙적'],['의의','대개 양성, 경과 관찰']],
+   note:'박동이 빠지지 않고 PR만 길면 1도 차단. 대부분 무증상이며 그 자체로는 응급이 아니다.',
+   cfg:{hr:68,pWave:true,prMs:290,qrsMs:90,beats:5}},
+
+  {id:'mobitz1',cat:'방실 전도장애',name:'2도 방실차단 Mobitz I',nameEn:'Mobitz I (Wenckebach)',abbr:'Mobitz I',
+   color:'var(--amber)',keyTone:'amber',
+   key:'PR 간격이 한 박씩 점점 길어지다가 결국 QRS 하나가 빠진다.',
+   feats:[['PR','주기마다 점진적 연장'],['탈락','결국 QRS 한 개 누락'],['리듬','묶음 박동(grouped)'],['위험','대개 양성, 경과 관찰']],
+   note:'PR가 길어지다 한 박 빠지고 다시 짧아지는 반복이면 Wenckebach. Mobitz II보다 양성이다.',
+   cfg:{hr:75,beats:9,block:{type:'wenckebach'}}},
+
+  {id:'mobitz2',cat:'방실 전도장애',name:'2도 방실차단 Mobitz II',nameEn:'Mobitz II',abbr:'Mobitz II',
+   critical:true,
+   key:'PR는 일정한데 예고 없이 QRS가 갑자기 빠진다. 완전차단으로 진행 위험.',
+   feats:[['PR','전도되는 박동은 PR 일정'],['탈락','경고 없이 QRS 갑자기 누락'],['QRS','넓은 경우 많음'],['위험','완전차단·실신 위험 → 박동기']],
+   note:'PR 변화 없이 박동이 뚝 빠지면 Mobitz II. 고위험이므로 상위 보고 대상이다.',
+   cfg:{hr:75,beats:8,block:{type:'mobitz2',wide:true,morph:'l'}}},
+
+  {id:'avb2to1',cat:'방실 전도장애',name:'2도 방실차단 (2:1)',nameEn:'2:1 AV Block',abbr:'2:1 AVB',
+   color:'var(--amber)',keyTone:'amber',
+   key:'P파 2개마다 QRS 1개만 전도(P:QRS = 2:1). 전도되는 PR은 일정.',
+   feats:[['전도','P 2개당 QRS 1개'],['PR','전도 박동의 PR 일정'],['P파','전도 안 된 P가 사이에 보임'],['감별','I/II형 구분이 어려움']],
+   note:'QRS마다 P가 두 개씩 보이면 2:1 차단. 넓은 QRS면 Mobitz II 계열로 보고 더 주의한다.',
+   cfg:{hr:80,beats:9,block:{type:'2to1'}}},
+
+  {id:'avbhigh',cat:'방실 전도장애',name:'고도 방실차단',nameEn:'High-grade AV Block',abbr:'High-grade',
+   critical:true,
+   key:'연속된 P파 2개 이상이 전도되지 못한다(3:1 이상).',
+   feats:[['전도','연속 2개 이상 P 비전도(3:1+)'],['심실','느린 이탈리듬 의존'],['P파','규칙적이나 대부분 차단'],['위험','완전차단 직전 — 고위험']],
+   note:'P가 여러 개 연속으로 막히면 고도 차단. 완전차단에 준해 응급으로 다룬다.',
+   cfg:{hr:84,beats:10,block:{type:'high'}}},
+
+  {id:'avb3',cat:'방실 전도장애',name:'3도 방실차단(완전차단)',nameEn:'Complete AV Block',abbr:'CAVB',
    critical:true,
    key:'심방과 심실이 서로 무관하게 박동(방실 해리). P파와 QRS가 각자 논다.',
-   feats:[['해리','P파와 QRS가 완전히 무관'],['리듬','P-P, R-R는 각각 규칙적'],['심실','느린 이탈리듬(30–45회)'],['위험','실신·급사 → 영구 박동기 적응증']],
-   note:'P파는 규칙적인데 QRS와 박자가 전혀 안 맞으면 완전차단. 느린 심박+실신력이면 응급으로 상위 보고한다.',
+   feats:[['해리','P파와 QRS가 완전히 무관'],['리듬','P-P, R-R 각각은 규칙적'],['심실','느린 이탈리듬(30–45)'],['위험','실신·급사 → 영구 박동기']],
+   note:'P파는 규칙적인데 QRS와 박자가 전혀 안 맞으면 완전차단. 느린 심박+실신력이면 응급 보고한다.',
    cfg:{hr:38,atrialHr:70,pWave:true,prMs:0,qrsMs:110,beats:4,dissoc:true,critical:true,seed:5}},
+
+  /* ============ 6. 각차단(Bundle Branch Block) ============ */
+  {id:'rbbb',cat:'각차단',name:'우각차단',nameEn:'Right Bundle Branch Block',abbr:'RBBB',
+   key:'넓은 QRS인데 정상 P파가 선행. V1에서 rSR\u2032(토끼 귀, M자) 모양.',
+   feats:[['QRS','넓음(≥120ms)'],['P파','정상 P가 1:1 선행(빈맥 아님)'],['모양','V1 rSR\u2032(M자)'],['감별','P 있음 → VT와 구분']],
+   note:'넓은 QRS여도 정상 P파가 앞에 있고 빠르지 않으면 각차단. 단일 유도로 좌/우 구분은 어려워 12유도가 필요하다.',
+   cfg:{hr:74,pWave:true,prMs:160,beats:5,wide:true,morph:'r',seed:21}},
+
+  {id:'lbbb',cat:'각차단',name:'좌각차단',nameEn:'Left Bundle Branch Block',abbr:'LBBB',
+   key:'넓은 QRS + 정상 선행 P. V6에서 넓고 둔한 단일 R(notched).',
+   feats:[['QRS','넓음(≥120ms)'],['P파','정상 P 1:1 선행'],['모양','넓은 단봉 R(둔함)'],['의의','새 LBBB + 흉통은 주의']],
+   note:'새로 생긴 LBBB가 흉통과 함께면 심근경색 가능성. 단일 유도에선 VT와의 감별을 위해 P파 유무를 본다.',
+   cfg:{hr:74,pWave:true,prMs:160,beats:5,wide:true,morph:'l',seed:22}},
+
+  {id:'ibbb',cat:'각차단',name:'간헐적 각차단',nameEn:'Intermittent BBB',abbr:'I-BBB',
+   key:'같은 strip에서 좁은 QRS와 넓은 QRS가 번갈아/간헐적으로 나타난다.',
+   feats:[['QRS','정상폭 ↔ 넓은폭 전환'],['유발','심박수 의존(rate-related) 흔함'],['P파','정상 유지'],['감별','넓은 박동만 보면 VT로 오인']],
+   note:'넓어진 박동에도 정상 P가 선행하고 좁은 박동과 섞여 나오면 간헐적 각차단이다. 일부만 보고 VT로 단정하지 않는다.',
+   cfg:{hr:78,pWave:true,prMs:160,beats:6,intermittent:true,morph:'l',seed:23}},
+
+  {id:'abbb',cat:'각차단',name:'교대성 각차단',nameEn:'Alternating BBB',abbr:'Alt-BBB',
+   color:'var(--amber)',keyTone:'amber',
+   key:'우각차단 모양과 좌각차단 모양이 번갈아 나타난다. 양각 손상 신호일 수 있다.',
+   feats:[['QRS','RBBB ↔ LBBB 형태 교대'],['의의','양측 전도계 손상 가능'],['P파','정상 선행'],['위험','완전차단 진행 위험 → 주의']],
+   note:'넓은 QRS의 모양이 박동마다 좌/우로 바뀌면 교대성 각차단. 고위험 전도장애로 보고 주의한다.',
+   cfg:{hr:76,pWave:true,prMs:160,beats:6,alt:true,seed:24}},
+
+  /* ============ 7. 기타 심전도 리듬 ============ */
+  {id:'wpw',cat:'기타 심전도 리듬',name:'조기흥분증후군(WPW)',nameEn:'Pre-excitation (WPW)',abbr:'WPW',
+   key:'짧은 PR + QRS 시작부의 델타파(완만한 상승)가 특징.',
+   feats:[['PR','짧다(<120ms)'],['델타파','QRS 시작이 뭉툭하게 슬러'],['QRS','넓어 보임'],['위험','빈맥 동반 시 위험할 수 있음']],
+   note:'짧은 PR + 델타파면 부전도로를 통한 조기흥분. AF가 동반되면 빠른 전도로 위험할 수 있어 식별이 중요하다.',
+   cfg:{hr:72,pWave:true,prMs:92,qrsMs:120,beats:5,delta:true,seed:31}},
+
+  {id:'leadrev',cat:'기타 심전도 리듬',name:'유도 반전(오접속)',nameEn:'Lead Reversal',abbr:'Lead rev.',
+   color:'var(--amber)',keyTone:'amber',
+   key:'P·QRS·T가 모두 거꾸로(음성). 진짜 부정맥이 아니라 전극 오접속 아티팩트.',
+   feats:[['파형','P·QRS·T 전체 역전'],['원인','전극 좌우/상하 바뀜'],['단서','직전 정상 기록과 갑자기 다름'],['처치','전극 위치 재확인']],
+   note:'갑자기 모든 파형이 뒤집히면 부정맥보다 전극 오접속을 먼저 의심한다. 재부착 후 재측정이 정답이다.',
+   cfg:{hr:72,pWave:true,prMs:160,qrsMs:90,beats:5,inverted:true,seed:32}},
+
+  {id:'pacer',cat:'기타 심전도 리듬',name:'박동기 리듬',nameEn:'Pacemaker Rhythm',abbr:'Paced',
+   key:'각 QRS 앞에 가느다란 수직 페이싱 스파이크. 심실 페이싱은 넓은 QRS.',
+   feats:[['스파이크','QRS 직전 수직 신호'],['QRS','심실 페이싱이면 넓음'],['리듬','설정 속도에서 규칙적'],['확인','스파이크-포착(capture) 여부']],
+   note:'스파이크 뒤에 QRS가 따라오면 정상 포착. 스파이크만 있고 QRS가 없으면 포착 실패(failure to capture)로 보고한다.',
+   cfg:{hr:70,pWave:false,qrsMs:140,wide:true,morph:'l',beats:5,pace:true,seed:33}},
 ];
 
-const CATS=['정상 · 동성','심방 부정맥','심실 부정맥','전도 장애'];
+const CATS=['정상 · 동성 리듬','심방 부정맥','접합부 리듬','심실 부정맥','방실 전도장애','각차단','기타 심전도 리듬'];
 function byId(id){return RHYTHMS.find(r=>r.id===id);}
 
 /* ---------------- 아이콘 ---------------- */
@@ -545,9 +809,6 @@ const state={tab:'home', rhythm:null, learn:0, quiz:null, quizBest:null, tip:nul
 function viewHome(){
   const total=RHYTHMS.length, seen=state.learned.size;
   const pct=Math.round(seen/total*100);
-  if(!state.tip){ const pool=RHYTHMS.filter(r=>!r.normal); state.tip=pool[Math.floor(Math.random()*pool.length)].id; }
-  const tip=byId(state.tip);
-  const crit=RHYTHMS.filter(r=>r.critical);
 
   return `<div class="view">
     <p class="eyebrow">웨어러블 심전도 판독 · 분석사 훈련</p>
@@ -555,7 +816,7 @@ function viewHome(){
 
     <button class="hero" data-rhythm="nsr" style="margin-top:18px">
       <div class="bar">
-        <span class="dot"></span><span class="ld">LEAD I · 25 mm/s</span>
+        <span class="dot"></span><span class="ld">10 mm/mV · 25 mm/s</span>
         <span class="rd"><b>72</b>bpm · NSR</span>
       </div>
       <div class="body">
@@ -565,31 +826,16 @@ function viewHome(){
       </div>
     </button>
 
-    <div class="prog-card" style="margin-top:14px">
-      <div class="pr"><span>학습한 리듬</span><span class="v"><b>${seen}</b> / ${total}</span></div>
-      <div class="qprog"><i style="width:${pct}%"></i></div>
-      <div class="pr"><span>퀴즈 최고 점수</span><span class="v">${state.quizBest==null?'<span style="color:var(--mute)">아직 없음</span>':'<b>'+state.quizBest+'</b> / 30'}</span></div>
-    </div>
-
-    <div class="sec-head"><span class="t">오늘의 감별 포인트</span></div>
-    <button class="tip" data-rhythm="${tip.id}">
-      <span class="mini">${traceSVG(tip.cfg,{mini:true,h:72})}</span>
-      <span class="tx">
-        <span class="nm">${tip.name}${tip.critical?'<span class="chip red" style="padding:1px 7px">응급</span>':''}</span>
-        <span class="kd">${tip.key}</span>
-      </span>
-    </button>
-
     <div class="sec-head"><span class="t">학습 메뉴</span></div>
     <div class="stack">
       <button class="nav-card" data-go="learn">
         <span class="ic" style="color:var(--ink)">${I.read}</span>
-        <span><span class="ttl">읽는 법</span><span class="dsc">파형 해부학 + 5단계 체계적 판독</span></span>
+        <span><span class="ttl">읽는 법</span><span class="dsc">심전도 판독법 + 5단계 체계적 판독</span></span>
         <span class="arr">${I.arr}</span>
       </button>
       <button class="nav-card" data-go="library">
         <span class="ic" style="color:var(--ink)">${I.lib}</span>
-        <span><span class="ttl">부정맥 종류</span><span class="dsc">정상 동율동 + 부정맥 ${RHYTHMS.length-3}종 감별</span></span>
+        <span><span class="ttl">부정맥 종류</span><span class="dsc">7개 분류 · 리듬 ${RHYTHMS.length}종 감별</span></span>
         <span class="arr">${I.arr}</span>
       </button>
       <button class="nav-card" data-go="quiz">
@@ -599,10 +845,10 @@ function viewHome(){
       </button>
     </div>
 
-    <div class="sec-head"><span class="t">응급 리듬 빠른 참조</span></div>
-    <div class="crit-row">
-      ${crit.map(r=>`<button class="crit-chip" data-rhythm="${r.id}">${I.alert}
-        <span><span class="nm">${r.name}</span><span class="ab">${r.abbr}</span></span></button>`).join('')}
+    <div class="prog-card" style="margin-top:20px">
+      <div class="pr"><span>학습한 리듬</span><span class="v"><b>${seen}</b> / ${total}</span></div>
+      <div class="qprog"><i style="width:${pct}%"></i></div>
+      <div class="pr"><span>퀴즈 최고 점수</span><span class="v">${state.quizBest==null?'<span style="color:var(--mute)">아직 없음</span>':'<b>'+state.quizBest+'</b> / 30'}</span></div>
     </div>
 
     <div class="footnote">
@@ -614,26 +860,26 @@ function viewHome(){
 
 /* ---------------- 뷰: 읽는 법 ---------------- */
 const LEARN_TABS=[
-  {key:'p',lab:'P파',cfg:{hr:60,pWave:true,prMs:160,qrsMs:90,beats:3,normal:true},
-   title:'P파 — 심방 탈분극',desc:'동결절에서 시작된 신호가 양쪽 심방으로 퍼지는 과정. 부드럽고 둥근 곡선이며 II에서 양성이다.',meta:'폭 ≤120ms · 모든 QRS를 1:1로 선행'},
-  {key:'pr',lab:'PR',cfg:{hr:60,pWave:true,prMs:160,qrsMs:90,beats:3,normal:true},
-   title:'PR 간격 — 방실 전도',desc:'심방에서 심실로 신호가 전달되는 시간. 방실결절에서 약간 지연된다. 길어지면 방실차단을 의심.',meta:'120–200ms · P 시작부터 QRS 시작까지'},
-  {key:'qrs',lab:'QRS',cfg:{hr:60,pWave:true,prMs:160,qrsMs:90,beats:3,normal:true},
-   title:'QRS군 — 심실 탈분극',desc:'심실이 수축하는 순간. 가장 크고 뾰족한 파형. 넓어지면(≥120ms) 심실 기원 또는 각차단을 의심.',meta:'< 120ms · 좁고 빠른 스파이크'},
-  {key:'t',lab:'T파',cfg:{hr:60,pWave:true,prMs:160,qrsMs:90,beats:3,normal:true},
-   title:'T파 — 심실 재분극',desc:'심실이 이완을 준비하는 과정. QRS보다 완만하고 둥글다. QRS와 같은 방향인 것이 정상.',meta:'QRS와 동일 방향 · 대칭이면 주의'},
+  {key:'p',lab:'P wave',
+   title:'P wave — 심방 탈분극',desc:'동결절에서 시작된 신호가 양쪽 심방으로 퍼지는 과정. 부드럽고 둥근 곡선이며 II에서 양성이다.',meta:'폭 ≤120ms · 모든 QRS를 1:1로 선행'},
+  {key:'pr',lab:'PR interval',
+   title:'PR interval — 방실 전도',desc:'심방에서 심실로 신호가 전달되는 시간. 방실결절에서 약간 지연된다. 길어지면 방실차단을 의심.',meta:'120–200ms · P 시작부터 QRS 시작까지'},
+  {key:'qrs',lab:'QRS complex',
+   title:'QRS complex — 심실 탈분극',desc:'심실이 수축하는 순간. 가장 크고 뾰족한 파형. 넓어지면(≥120ms) 심실 기원 또는 각차단을 의심.',meta:'< 120ms · 좁고 빠른 스파이크'},
+  {key:'t',lab:'T wave',
+   title:'T wave — 심실 재분극',desc:'심실이 이완을 준비하는 과정. QRS보다 완만하고 둥글다. QRS와 같은 방향인 것이 정상.',meta:'QRS와 동일 방향 · 대칭이면 주의'},
 ];
 function viewLearn(){
   const s=LEARN_TABS[state.learn];
   return `<div class="view">
     <p class="eyebrow">읽는 법 · STEP 1</p>
-    <h2 style="margin-top:6px">한 박동의 해부학</h2>
-    <p class="lead">정상 파형을 먼저 몸에 익힌다. 무엇이 정상인지 알아야 무엇이 이상한지 보인다.</p>
+    <h2 style="margin-top:6px">심전도 판독법</h2>
+    <p class="lead">정상 파형을 먼저 몸에 익힌다. 항목을 누르면 아래 파형에서 해당 구간이 빨간색으로 표시된다.</p>
 
     <div class="seg-tabs">
       ${LEARN_TABS.map((t,i)=>`<button data-learn="${i}" class="${i===state.learn?'on':''}">${t.lab}</button>`).join('')}
     </div>
-    ${traceSVG(s.cfg,{animate:true,h:124})}
+    ${learnTraceSVG(s.key)}
     <div class="card" style="margin-top:14px">
       <h3>${s.title}</h3>
       <p style="font-size:13.5px;color:var(--ink-soft);margin-top:7px">${s.desc}</p>
@@ -715,15 +961,19 @@ function viewDetail(){
 /* ---------------- 퀴즈 ---------------- */
 const QUIZ_COUNT=30;
 /* 진단을 바꾸지 않는 안전한 심박수 변동 범위(문제마다 파형이 달라 보이게) */
-const QVAR={ nsr:[62,98], sbrady:[40,57], stach:[104,148], afib:[88,138],
-  aflutter:[142,158], svt:[166,210], pac:[64,84], pvc:[64,84], vt:[156,196], avb3:[34,44] };
+const QVAR={ nsr:[62,98], sbrady:[40,57], stach:[104,148], sarr:[60,82],
+  afib:[88,138], aflutter:[142,158], svt:[166,210], mat:[104,140],
+  jrhythm:[42,58], jtach:[104,128], pac:[64,84], pvc:[64,84], jpc:[64,84],
+  vt:[150,196], avb1:[58,76] };
+/* 패턴이 박동 수에 민감해 beats를 고정해야 하는 cfg 플래그 */
+function patterned(c){ return c.early||c.dissoc||c.block||c.poly||c.chaos||c.skip||c.flutter||c.alt||c.intermittent||c.pace||c.mat; }
 function shuffle(a){a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
 function qConfig(r){
   const c=Object.assign({},r.cfg);
   c.seed=(c.seed||1)+1+Math.floor(Math.random()*900);          // 노이즈/모양 변화
   const v=QVAR[r.id]; if(v) c.hr=Math.round(v[0]+Math.random()*(v[1]-v[0]));
-  // 조기수축·해리 리듬은 박동 수 고정(구조 유지), 그 외엔 ±1 변동
-  if(!r.cfg.early && !r.cfg.dissoc && c.beats) c.beats=Math.max(3,c.beats+(Math.random()<.5?-1:0)+(Math.random()<.5?0:1));
+  // 패턴 리듬은 박동 수 고정(구조 유지), 그 외엔 ±1 변동
+  if(!patterned(r.cfg) && c.beats) c.beats=Math.max(3,c.beats+(Math.random()<.5?-1:0)+(Math.random()<.5?0:1));
   return c;
 }
 function newQuiz(){
